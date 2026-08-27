@@ -130,7 +130,7 @@
 //
 // Override the backend with ?backend=https://your-host (e.g. your deployed
 // server.js on Render/Railway): https://<user>.github.io/MarbelAI/?backend=...
-const DEFAULT_BACKEND = 'https://work-1-xffkiwsopwsrwzty.prod-runtime.all-hands.dev';
+const DEFAULT_BACKEND = 'https://work-1-tzykbslejgjfecnu.prod-runtime.all-hands.dev';
 const override = new URLSearchParams(window.location.search).get('backend');
 const GHPAGES_BACKEND = override || DEFAULT_BACKEND;
 const API_BASE =
