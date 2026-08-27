@@ -14,27 +14,11 @@
   const statusLabel = document.getElementById('statusLabel');
   const sideToggle = document.getElementById('sideToggle');
   const layoutEl = document.querySelector('.layout');
-  const canvasEl = document.getElementById('canvas');
-  const canvasToggle = document.getElementById('canvasToggle');
-  const canvasClose = document.getElementById('canvasClose');
-  const canvasReload = document.getElementById('canvasReload');
-  const canvasTypeEl = document.getElementById('canvasType');
-  const canvasStatus = document.getElementById('canvasStatus');
-  const canvasEmpty = document.getElementById('canvasEmpty');
-  const canvasFrame = document.getElementById('canvasFrame');
-  const canvasCode = document.getElementById('canvasCode');
-  const tabPreview = document.getElementById('ctab-preview');
-  const tabCode = document.getElementById('ctab-code');
 
   let busy = false;
   let threadId = 0;
   let threadCount = 0;
-  let history = []; // {id, items:[{role,content,artifacts?}]}
-
-  // ---- Canvas state ----
-  let canvasOpen = false;
-  let currentArtifact = null; // {lang, html, code}
-  let canvasView = 'preview'; // 'preview' | 'code'
+  let history = []; // {id, items:[{role,content}]}
 
   function setStatus(state, label) {
     statusDot.className = 'dot' + (state ? ' ' + state : '');
@@ -45,54 +29,15 @@
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function isCanvasLang(lang) {
-    lang = (lang || '').trim().toLowerCase();
-    return lang === 'html' || lang === 'html5' || lang === 'svg' || lang === 'mermaid';
-  }
-
-  // Split a ```...``` block body into {lang, code}. First line treated as the
-  // language token when it's a short single word followed by a newline.
-  function parseBlock(src) {
-    const lines = src.split('\n');
-    if (lines.length > 1 && /^[A-Za-z0-9#+.-]{1,24}$/.test(lines[0].trim())) {
-      return { lang: lines[0].trim(), code: lines.slice(1).join('\n') };
-    }
-    return { lang: '', code: src };
-  }
-
-  // Collect canvas-ready artifacts (html / svg / mermaid) from an assistant reply.
-  function extractArtifacts(text) {
-    const out = [];
-    const re = /```([\s\S]*?)```/g;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const parsed = parseBlock(m[1]);
-      if (isCanvasLang(parsed.lang)) out.push(parsed);
-    }
-    return out;
-  }
-
-  function decorateText(text, artCounter) {
-    artCounter = artCounter || { n: 0 };
+  function decorateText(text) {
     const blockRe = /```([\s\S]*?)```/g;
     const parts = [];
     let last = 0, m;
     while ((m = blockRe.exec(text)) !== null) {
       const before = text.slice(last, m.index);
-      const parsed = parseBlock(m[1]);
-      const isArt = isCanvasLang(parsed.lang);
-      let blockHtml = '<div class="code-block">';
-      if (isArt) {
-        const idx = artCounter.n++;
-        blockHtml += '<button type="button" class="canvas-open-btn" data-art="' + idx + '" title="Buka di Canvas">' +
-          '&#9642; Buka di Canvas <span class="cob-lang">' + esc(parsed.lang) + '</span></button>';
-        // Canvas blocks: drop the language tag line, show the body only.
-        blockHtml += '<pre>' + esc(parsed.code) + '</pre></div>';
-      } else {
-        // Non-canvas blocks: preserve the original fence body verbatim so a
-        // first line that is a plain word is never mistaken for a language tag.
-        blockHtml += '<pre>' + esc(m[1]) + '</pre></div>';
-      }
+      // Preserve the original fence body verbatim so a first line that is a
+      // plain word is never mistaken for a language tag.
+      const blockHtml = '<div class="code-block"><pre>' + esc(m[1]) + '</pre></div>';
       parts.push(before, { html: blockHtml });
       last = m.index + m[0].length;
     }
@@ -101,93 +46,6 @@
       if (typeof p === 'object') return p.html;
       return esc(p).replace(/`([^`]+)`/g, '<code>$1</code>');
     }).join('');
-  }
-
-  // ---- Canvas engine ----
-
-  // Build a full HTML document from a raw artifact (verified / sandboxed).
-  function artifactToDoc(lang, code) {
-    if (lang === 'mermaid') {
-      return [
-        '<!doctype html><html><head><meta charset="utf-8"/>',
-        '<style>html,body{margin:0;height:100%;background:#fff;box-sizing:border-box;font-family:system-ui,sans-serif}',
-        '#holder{display:flex;align-items:center;justify-content:flex-start;min-height:100%;padding:24px;overflow:auto}',
-        '#src{display:none;white-space:pre;font-family:ui-monospace,Consolas,monospace;padding:20px;font-size:12.5px;color:#333;overflow:auto;margin:0}</style>',
-        '</head><body>',
-        '<div id="holder"><div class="mermaid">' + code + '</div></div>',
-        '<pre id="src"></pre>',
-        '<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"><\/script>',
-        '<script>',
-        'if (window.mermaid) { mermaid.initialize({ startOnLoad: true }); }',
-        'else { var s=document.getElementById("src"); s.style.display="block"; s.textContent=' + JSON.stringify(code) + '; document.getElementById("holder").style.display="none"; }',
-        '<\/script>',
-        '</body></html>'
-      ].join('');
-    }
-    if (lang === 'svg') {
-      return [
-        '<!doctype html><html><head><meta charset="utf-8"/>',
-        '<style>html,body{margin:0;height:100%;background:#fff;display:grid;place-items:center;overflow:auto;padding:24px;box-sizing:border-box}svg{max-width:100%;max-height:100%}</style>',
-        '</head><body>' + code + '</body></html>'
-      ].join('');
-    }
-    // html
-    if (/<html[\s>]/i.test(code)) return code;
-    return [
-      '<!doctype html><html><head><meta charset="utf-8"/>',
-      '<style>html,body{margin:0;min-height:100%;font-family:system-ui,sans-serif;box-sizing:border-box}</style>',
-      '</head><body>' + code + '</body></html>'
-    ].join('');
-  }
-
-  function setCanvasPreview(lang, code) {
-    canvasFrame.srcdoc = artifactToDoc(lang, code);
-  }
-
-  function showCanvasPane(view) {
-    canvasView = view;
-    tabPreview.classList.toggle('active', view === 'preview');
-    tabCode.classList.toggle('active', view === 'code');
-    document.querySelector('.canvas-preview-pane').classList.toggle('active', view === 'preview');
-    document.querySelector('.canvas-code-pane').classList.toggle('active', view === 'code');
-    canvasEmpty.hidden = !(view === 'preview' && !currentArtifact);
-    canvasFrame.hidden = !(view === 'preview' && currentArtifact);
-  }
-
-  function openCanvas() {
-    canvasOpen = true;
-    canvasEl.hidden = false;
-    canvasToggle.classList.add('open');
-    canvasToggle.setAttribute('aria-pressed', 'true');
-  }
-
-  function closeCanvas() {
-    canvasOpen = false;
-    canvasEl.hidden = true;
-    canvasToggle.classList.remove('open');
-    canvasToggle.setAttribute('aria-pressed', 'false');
-  }
-
-  function openCanvasFor(art) {
-    currentArtifact = art;
-    canvasTypeEl.textContent = art.lang;
-    canvasCode.value = art.code;
-    setCanvasPreview(art.lang, art.code);
-    canvasStatus.textContent = art.lang === 'mermaid'
-      ? 'Diagram Mermaid. Preview memuat perender dari CDN (offline akan menampilkan sumber).'
-      : 'Artefak ' + art.lang.toUpperCase() + '. Edit kode lalu klik Reload untuk menjalankan ulang.';
-    showCanvasPane('preview');
-    openCanvas();
-  }
-
-  function reloadArtifact() {
-    if (!currentArtifact) return;
-    // currentArtifact is the same live object referenced by the history item,
-    // so persisting the edit here is enough for reopened messages.
-    currentArtifact.code = canvasCode.value;
-    setCanvasPreview(currentArtifact.lang, currentArtifact.code);
-    canvasStatus.textContent = 'Dimuat ulang.';
-    showCanvasPane('preview');
   }
 
   function addUserMessage(content) {
@@ -210,11 +68,7 @@
     body.className = 'body';
     const inner = document.createElement('div');
     inner.className = 'inner';
-    const artCounter = { n: 0 };
-    inner.innerHTML = decorateText(content, artCounter);
-    inner.dataset.artCount = String(artCounter.n);
-    // Keep the parsed artifacts on the element so "+ Buka di Canvas" knows what to open.
-    inner._artifacts = (opts.artifacts && opts.artifacts.length ? opts.artifacts : extractArtifacts(content));
+    inner.innerHTML = decorateText(content);
     if (opts.tokens) {
       const t = document.createElement('span');
       t.className = 'token';
@@ -351,7 +205,7 @@ async function chatRequest(messages) {
     activeBadge.classList.remove('show');
     th.items.forEach(function (i) {
       if (i.role === 'user') addUserMessage(i.content);
-      else addAssistantMessage(i.content, { artifacts: i._artifacts });
+      else addAssistantMessage(i.content);
     });
     updateThreadList();
   }
@@ -397,11 +251,9 @@ async function chatRequest(messages) {
       typing.remove();
       const content = extractContent(data) || '(respons kosong)';
       const usage = parseUsage(data);
-      const artifacts = extractArtifacts(content);
-      const item = { role: 'assistant', content: content };
-      if (artifacts.length) item._artifacts = artifacts;
-      current.items.push(item);
-      addAssistantMessage(content, Object.assign({ artifacts: artifacts }, usage || {}));
+      current.items.push({ role: 'assistant', content: content });
+      if (usage) addAssistantMessage(content, usage);
+      else addAssistantMessage(content);
       setStatus('on', 'terhubung');
     } catch (err) {
       typing.remove();
@@ -431,31 +283,6 @@ async function chatRequest(messages) {
   suggestions.addEventListener('click', function (e) {
     const btn = e.target.closest('button[data-prompt]');
     if (btn) onSend(btn.getAttribute('data-prompt'));
-  });
-
-  // ---- Canvas wiring ----
-  canvasToggle.addEventListener('click', function () {
-    if (canvasOpen) { closeCanvas(); return; }
-    if (currentArtifact) { openCanvas(); }
-    else {
-      // No artifact open yet: open the panel (empty state) so users know it exists.
-      openCanvas();
-      showCanvasPane('preview');
-    }
-  });
-  canvasClose.addEventListener('click', closeCanvas);
-  canvasReload.addEventListener('click', reloadArtifact);
-  tabPreview.addEventListener('click', function () { showCanvasPane('preview'); });
-  tabCode.addEventListener('click', function () { showCanvasPane('code'); });
-
-  // Delegate clicks on "+ Buka di Canvas" buttons inside rendered messages.
-  messagesEl.addEventListener('click', function (e) {
-    const btn = e.target.closest('.canvas-open-btn');
-    if (!btn) return;
-    const inner = btn.closest('.inner');
-    const idx = Number(btn.getAttribute('data-art'));
-    const arts = (inner && inner._artifacts) || [];
-    if (arts[idx]) openCanvasFor(arts[idx]);
   });
 
   const modelListEl = document.getElementById('modelNames');
