@@ -122,8 +122,16 @@
     return null;
   }
 
-  async function chatRequest(messages) {
-    const res = await fetch('/api/chat', {
+  // Determine the API base. When this UI is served statically on GitHub Pages
+// (no backend), fall back to the live Marbel AI backend host. Otherwise use
+// the same-origin /api proxy provided by server.js.
+const GHPAGES_BACKEND = 'https://work-1-xffkiwsopwsrwzty.prod-runtime.all-hands.dev';
+const API_BASE =
+  (window.location.hostname.indexOf('github.io') !== -1) ? GHPAGES_BACKEND : '';
+const api = function (path) { return API_BASE + path; };
+
+async function chatRequest(messages) {
+    const res = await fetch(api('/api/chat'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: model.value, messages, stream: false }),
@@ -313,7 +321,7 @@
   }
 
   function loadModels() {
-    fetch('/api/models')
+    fetch(api('/api/models'))
       .then(function (r) { return r.json(); })
       .catch(function () { return { data: [] }; })
       .then(function (data) {

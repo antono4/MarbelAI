@@ -6,8 +6,23 @@ const PORT = Number(process.env.PORT) || 12000;
 const UPSTREAM = process.env.UPSTREAM || 'http://localhost:20128';
 const API_KEY = process.env.API_KEY || '';
 const USE_SSE = String(process.env.USE_SSE || '1');
+// Allow cross-origin calls (e.g. the GitHub Pages statically-served UI) to reach
+// this backend's /api/chat. Restrict with a specific origin for production if desired.
+const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
 
 const ROOT = __dirname;
+
+const CORS_HEADERS = {
+  'access-control-allow-origin': ALLOW_ORIGIN,
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'Content-Type, Authorization',
+};
+
+function applyCors(res) {
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    res.setHeader(k, v);
+  }
+}
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -75,10 +90,21 @@ function proxyOpenAI(req, res) {
 const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, 'http://localhost');
   const urlPath = reqUrl.pathname;
+
+  if (req.method === 'OPTIONS') {
+    // CORS preflight
+    applyCors(res);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   try {
     if (req.method === 'POST' && urlPath === '/api/chat') {
+      applyCors(res);
       await proxyOpenAI(req, res);
     } else if (req.method === 'GET' && urlPath === '/api/models') {
+      applyCors(res);
       http.get(UPSTREAM + '/v1/models', { headers: { accept: 'application/json' } }, (upRes) => {
         res.writeHead(upRes.statusCode || 200, { 'content-type': 'application/json' });
         upRes.pipe(res);

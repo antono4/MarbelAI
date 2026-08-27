@@ -36,3 +36,13 @@ API_KEY="sk-..." PORT=12000 node server.js
 ## Catatan
 
 `server.js` membungkus endpoint `/v1/chat/completions` 9Router sebagai `/api/chat` agar API key tidak tersimpan di browser. Semua permintaan yang masuk menuju model `oc/*` (OpenCode, gratis).
+
+### Menjalankan dari GitHub Pages (host statis hanya)
+
+GitHub Pages tidak menjalankan `server.js`. Jika UI di-host statis di GitHub Pages, `app.js` otomatis memanggil backend live (`API_BASE` -> host yang menjalankan `server.js`) secara lintas-origin. Untuk itu server UI perlu dijalankan dengan CORS yang diizinkan:
+
+```bash
+API_KEY="sk-..." PORT=12000 ALLOW_ORIGIN=* node server.js
+```
+
+Default `GHPAGES_BACKEND` di `app.js` menunjuk ke host runtime Marbel AI. Sesuaikan jika backend Anda di alamat lain.
