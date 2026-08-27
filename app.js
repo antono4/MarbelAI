@@ -128,7 +128,18 @@
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: model.value, messages, stream: false }),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      // Non-JSON response (e.g. an HTML error page) — surface it instead of crashing.
+      const snippet = text.trim().slice(0, 120);
+      throw new Error(
+        'Respons dari server bukan format JSON (HTML).\n' + snippet +
+        (res.ok ? '' : '\nHTTP ' + res.status)
+      );
+    }
     if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
     return data;
   }
