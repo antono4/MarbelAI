@@ -37,8 +37,15 @@
           <span class="logo-name">Marbel AI</span>
           <span class="logo-role">AI Engineer</span>
         </div>
+        <div class="topbar-actions">
+          <button class="canvas-toggle" id="canvasToggle" title="Buka/tutup Canvas" type="button">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg>
+            <span>Canvas</span>
+          </button>
+        </div>
       </header>
 
+      <div class="workspace">
       <div id="threadWrap" class="thread-wrap">
         <!-- Welcome screen (hidden once a chat is active) -->
         <div id="welcome" class="welcome">
@@ -130,6 +137,41 @@
           <span class="working"></span> Marbel AI is working <span class="bsp">●●●</span>
         </div>
       </div>
+
+      <!-- ============ Canvas panel ============ -->
+      <div id="canvas" class="canvas" hidden>
+        <div class="canvas-header">
+          <div class="canvas-tabs" role="tablist">
+            <button type="button" class="ctab active" id="ctab-preview" role="tab">Preview</button>
+            <button type="button" class="ctab" id="ctab-code" role="tab">Code</button>
+          </div>
+          <div class="canvas-actions">
+            <span id="canvasType" class="canvas-type"></span>
+            <button type="button" class="cact" id="canvasReload" title="Jalankan ulang">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+            <button type="button" class="cact" id="canvasClose" title="Tutup Canvas">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="canvas-body">
+          <div class="canvas-pane canvas-preview-pane">
+            <div class="canvas-empty" id="canvasEmpty">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg>
+              <p>Tidak ada artfak untuk ditampilkan.<br/>Minta AI membuat halaman HTML, SVG, atau diagram, lalu buka dari pesannya.</p>
+            </div>
+            <iframe id="canvasFrame" class="canvas-frame" hidden sandbox="allow-scripts" title="Canvas preview"></iframe>
+          </div>
+          <div class="canvas-pane canvas-code-pane">
+            <textarea id="canvasCode" class="canvas-code" spellcheck="false" aria-label="Kode artefak"></textarea>
+          </div>
+        </div>
+        <div class="canvas-footer">
+          <span class="cstat" id="canvasStatus">Belum ada konten. Minta AI membuat sesuatu, lalu klik "Buka di Canvas".</span>
+        </div>
+      </div>
+      </div><!-- /.workspace -->
 
       <!-- ============ Composer ============ -->
       <form id="form" class="composer" autocomplete="off">
