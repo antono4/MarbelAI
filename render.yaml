@@ -1,9 +1,8 @@
-# Render Blueprint — deploy backend Marbel AI
-# Cara pakai: buat "New Blueprint" di Render, hubungkan repo ini
-# lalu set environment variabel di bawah (atau pakai .env).
+# Render Blueprint — deploy backend Marbel AI bersama upstream "9route" dalam satu deploy.
+# Cara pakai: buat "New Blueprint" di Render, hubungkan repo ini — Render membuat kedua service sekaligus.
 services:
   - type: web
-    name: marbel-ai-backend
+    name: marbel-ai
     runtime: node
     plan: free
     buildCommand: npm install --omit=dev
@@ -12,13 +11,22 @@ services:
     envVars:
       - key: PORT
         value: 10000
-      # UPSTREAM: URL publik 9Router. Ganti sesuai deployment 9Router Anda.
+      # UPSTREAM: URL publik service "9route" yang juga dideploy oleh blueprint ini.
       - key: UPSTREAM
-        sync: false
-        value: http://localhost:20128
+        value: https://9route.onrender.com
       - key: API_KEY
         sync: false
       - key: ALLOW_ORIGIN
         value: "*"
       - key: USE_SSE
         value: "0"
+
+  - type: web
+    name: 9route
+    runtime: node
+    plan: free
+    repo: https://github.com/antono4/9router
+    branch: master
+    buildCommand: npm install && npm run build
+    startCommand: node custom-server.js --port 10000
+    healthCheckPath: /
