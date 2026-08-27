@@ -69,6 +69,7 @@
     const inner = document.createElement('div');
     inner.className = 'inner';
     inner.innerHTML = decorateText(content);
+    body.appendChild(inner);
     if (opts.tokens) {
       const t = document.createElement('span');
       t.className = 'token';
