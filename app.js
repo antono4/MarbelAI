@@ -86,8 +86,13 @@
         const idx = artCounter.n++;
         blockHtml += '<button type="button" class="canvas-open-btn" data-art="' + idx + '" title="Buka di Canvas">' +
           '&#9642; Buka di Canvas <span class="cob-lang">' + esc(parsed.lang) + '</span></button>';
+        // Canvas blocks: drop the language tag line, show the body only.
+        blockHtml += '<pre>' + esc(parsed.code) + '</pre></div>';
+      } else {
+        // Non-canvas blocks: preserve the original fence body verbatim so a
+        // first line that is a plain word is never mistaken for a language tag.
+        blockHtml += '<pre>' + esc(m[1]) + '</pre></div>';
       }
-      blockHtml += '<pre>' + esc(parsed.code) + '</pre></div>';
       parts.push(before, { html: blockHtml });
       last = m.index + m[0].length;
     }
