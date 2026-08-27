@@ -1,9 +1,13 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
 const PORT = Number(process.env.PORT) || 12000;
 const UPSTREAM = process.env.UPSTREAM || 'http://localhost:20128';
+// Pick the transport module matching the UPSTREAM protocol so https://
+// upstreams (e.g. Render public URLs) work instead of throwing.
+const ssl = UPSTREAM.startsWith('https://') ? https : http;
 const API_KEY = process.env.API_KEY || '';
 const USE_SSE = String(process.env.USE_SSE || '1');
 // Allow cross-origin calls (e.g. the GitHub Pages statically-served UI) to reach
@@ -61,7 +65,7 @@ function proxyOpenAI(req, res) {
         'accept': isStream ? 'text/event-stream' : (req.headers.accept || 'application/json'),
       };
       const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      const upstreamReq = http.request(
+      const upstreamReq = ssl.request(
         UPSTREAM + '/v1/chat/completions',
         { method: 'POST', headers },
         (upRes) => {
@@ -105,7 +109,7 @@ const server = http.createServer(async (req, res) => {
       await proxyOpenAI(req, res);
     } else if (req.method === 'GET' && urlPath === '/api/models') {
       applyCors(res);
-      http.get(UPSTREAM + '/v1/models', { headers: { accept: 'application/json' } }, (upRes) => {
+      ssl.get(UPSTREAM + '/v1/models', { headers: { accept: 'application/json' } }, (upRes) => {
         res.writeHead(upRes.statusCode || 200, { 'content-type': 'application/json' });
         upRes.pipe(res);
       }).on('error', () => {
