@@ -123,9 +123,14 @@
   }
 
   // Determine the API base. When this UI is served statically on GitHub Pages
-// (no backend), fall back to the live Marbel AI backend host. Otherwise use
-// the same-origin /api proxy provided by server.js.
-const GHPAGES_BACKEND = 'https://work-1-xffkiwsopwsrwzty.prod-runtime.all-hands.dev';
+// (no backend), fall back to a live Marbel AI backend host hosting server.js.
+// Otherwise use the same-origin /api proxy provided by server.js.
+//
+// Override the backend with ?backend=https://your-host (e.g. your deployed
+// server.js on Render/Railway): https://<user>.github.io/MarbelAI/?backend=...
+const DEFAULT_BACKEND = 'https://work-1-xffkiwsopwsrwzty.prod-runtime.all-hands.dev';
+const override = new URLSearchParams(window.location.search).get('backend');
+const GHPAGES_BACKEND = override || DEFAULT_BACKEND;
 const API_BASE =
   (window.location.hostname.indexOf('github.io') !== -1) ? GHPAGES_BACKEND : '';
 const api = function (path) { return API_BASE + path; };

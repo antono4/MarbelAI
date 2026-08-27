@@ -1,0 +1,24 @@
+# Render Blueprint — deploy backend Marbel AI
+# Cara pakai: buat "New Blueprint" di Render, hubungkan repo ini
+# lalu set environment variabel di bawah (atau pakai .env).
+services:
+  - type: web
+    name: marbel-ai-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 10000
+      # UPSTREAM: URL publik 9Router. Ganti sesuai deployment 9Router Anda.
+      - key: UPSTREAM
+        sync: false
+        value: http://localhost:20128
+      - key: API_KEY
+        sync: false
+      - key: ALLOW_ORIGIN
+        value: "*"
+      - key: USE_SSE
+        value: "0"

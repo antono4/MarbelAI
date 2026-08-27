@@ -46,3 +46,25 @@ API_KEY="sk-..." PORT=12000 ALLOW_ORIGIN=* node server.js
 ```
 
 Default `GHPAGES_BACKEND` di `app.js` menunjuk ke host runtime Marbel AI. Sesuaikan jika backend Anda di alamat lain.
+
+## Deploy ke backend publik (agar GitHub Pages benar-benar berfungsi)
+
+GitHub Pages hanya menyajikan file statis, jadi untuk chat berjalan perlu **backend publik** yang menjalankan `server.js` **dan** dapat menjangkau 9Router. Ikuti langkah berikut:
+
+1. **Pilih hosting** (Render / Railway / Fly.io / VPS). Gunakan file yang sudah disertakan:
+   - `render.yaml` — Render Blueprint
+   - `railway.json` — Railway
+   - `Dockerfile` + `package.json` — Docker/VPS
+2. **Set environment di platform tsb** (lihat `.env.example`):
+   - `PORT=10000`
+   - `UPSTREAM=` URL **publik 9Router** Anda (9Router itu sendiri juga perlu di-host publik/kontainer yang bisa dijangkau dari internet, bukan `localhost`)
+   - `API_KEY=` key 9Router
+   - `ALLOW_ORIGIN=*`
+   - `USE_SSE=0`
+3. **Arahkan UI GitHub Pages ke backend** tersebut dengan parameter URL:
+   ```
+   https://<user>.github.io/MarbelAI/?backend=https://<deployed-backend-url>
+   ```
+   atau ubah `DEFAULT_BACKEND` di `app.js`.
+
+> ⚠️ Penting: di sandbox/lingkungan ini 9Router hanya berjalan di `localhost`, sehingga backend publik harus menunjuk ke 9Router yang juga di-host publik. CORS sudah diterapkan di `server.js` agar request lintas-origin dari GitHub Pages diterima.
