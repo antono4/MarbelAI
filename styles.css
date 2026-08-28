@@ -323,6 +323,8 @@ body {
 .logo-role {
   font-size:11px; color:var(--muted);
   border-left:1px solid var(--line-2); padding-left:11px; margin-left:2px;
+  white-space:nowrap;
+  letter-spacing:.02em;
 }
 .topbar-right { display:flex; align-items:center; gap:10px; }
 .header-pill {
