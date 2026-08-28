@@ -208,6 +208,8 @@ const  FALLBACK_BACKEND  = 'https://marbel-ai.onrender.com';
 const override = new URLSearchParams(window.location.search).get('backend');
 let backendInUse = override || DEFAULT_BACKEND;
 const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
+// Free models (OpenCode/Zen, no account) — order is the fallback priority.
+const FREE_MODELS = ['mimo-v2.5-free', 'hy3-free', 'laguna-s-2.1-free', 'nemotron-3.5-lightning-free'];
 
 function apiBase() {
   if (!isGitHubPages) return '';
@@ -230,28 +232,75 @@ async function ensureBackend() {
   }
 }
 
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+function isRetryable(status, message) {
+  if (status === 429 || status === 502 || status === 503 || status === 504) return true;
+  return /rate limit|too many requests|busy|overloaded|try again later|upstream request failed|endpoint is unavailable|temporarily unavailable|timeout/i.test(message || '');
+}
+
+function isTransientError(err) {
+  return err instanceof TypeError || /fetch|network|failed|econnreset|socket/i.test(err.message || '');
+}
+
 async function chatRequest(messages) {
-    if (isGitHubPages) await ensureBackend();
-    const res = await fetch(api('/api/chat'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: model.value, messages, stream: false }),
-    });
-    const text = await res.text();
-    let data;
+  if (isGitHubPages) await ensureBackend();
+  const maxAttempts = 3;
+  const candidateModels = (function () {
+    const list = [model.value];
+    FREE_MODELS.forEach(function (id) { if (list.indexOf(id) === -1) list.push(id); });
+    return list;
+  })();
+  let modelIndex = 0;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const currentModel = candidateModels[Math.min(modelIndex, candidateModels.length - 1)];
+
+    let res;
     try {
-      data = JSON.parse(text);
+      res = await fetch(api('/api/chat'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: currentModel, messages, stream: false }),
+      });
     } catch (e) {
-      // Non-JSON response (e.g. an HTML error page) — surface it instead of crashing.
-      const snippet = text.trim().slice(0, 120);
-      throw new Error(
-        'Respons dari server bukan format JSON (HTML).\n' + snippet +
-        (res.ok ? '' : '\nHTTP ' + res.status)
-      );
+      if (attempt < maxAttempts && isTransientError(e)) {
+        lastError = e;
+        setStatus('on', 'jaringan bermasalah — mencoba lagi ' + attempt + '/' + (maxAttempts - 1) + '…');
+        await sleep(1000 * Math.pow(2, attempt - 1));
+        continue;
+      }
+      throw e;
     }
-    if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
-    return data;
+
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (e) { data = null; }
+    const status = res.status;
+    const message = (data && data.error && data.error.message) ||
+      (data ? '' : 'Respons dari server bukan format JSON (HTTP ' + status + '). ' + text.trim().slice(0, 120));
+
+    if (res.ok && data) return data;
+
+    const err = new Error(message || ('HTTP ' + status));
+    if (attempt < maxAttempts && isRetryable(status, message)) {
+      lastError = err;
+      if (modelIndex < candidateModels.length - 1) {
+        modelIndex++;
+        setStatus('on', 'model sibuk — beralih ke ' + candidateModels[modelIndex] + '…');
+      } else {
+        setStatus('on', 'server sibuk — mencoba lagi ' + attempt + '/' + (maxAttempts - 1) + '…');
+        await sleep(1000 * Math.pow(2, attempt - 1));
+      }
+      continue;
+    }
+    throw err;
   }
+  throw lastError;
+}
 
   function buildThreadHistory() {
     const msgs = history.flatMap(function (h) {
@@ -370,8 +419,11 @@ async function chatRequest(messages) {
       setStatus('on', 'terhubung');
     } catch (err) {
       typing.remove();
-      current.items.push({ role: 'assistant', content: 'Terjadi kesalahan:\n' + err.message });
-      addAssistantMessage('Terjadi kesalahan:\n' + err.message, { err: true });
+      const friendly = isRetryable(0, err.message)
+        ? 'Server AI sedang sibuk atau mengalami gangguan sementara.\nPermintaan sudah dicoba ulang otomatis dengan beberapa model.\nMohon tunggu beberapa saat lalu kirim ulang pesan Anda.'
+        : 'Terjadi kesalahan:\n' + err.message;
+      current.items.push({ role: 'assistant', content: friendly });
+      addAssistantMessage(friendly, { err: true });
       setStatus('err', 'gagal');
     } finally {
       busy = false;
