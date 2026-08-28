@@ -98,7 +98,11 @@
     if (opts.tokens) {
       const t = document.createElement('span');
       t.className = 'token';
-      t.textContent = '⚡ ' + opts.tokens + ' token · ' + (opts.cost === '0' ? 'Rp 0 / free' : '$' + opts.cost);
+      let label = '⚡ ' + opts.tokens + ' token · ' + (opts.cost === '0' ? 'Rp 0 / free' : '$' + opts.cost);
+      if (opts.agents && opts.agents.length) {
+        label += ' · agent: ' + opts.agents.join(' + ');
+      }
+      t.textContent = label;
       body.appendChild(t);
     }
     wrap.appendChild(tag);
@@ -145,7 +149,7 @@
   function parseUsage(data) {
     if (data && data.usage) {
       const t = data.usage.total_tokens || data.usage.completion_tokens || 0;
-      return { tokens: t, cost: data.cost || '0' };
+      return { tokens: t, cost: data.cost || '0', agents: data.agents || null };
     }
     return null;
   }
@@ -279,6 +283,7 @@ async function chatEnsemble(messages) {
   const minGood = 2;          // minimal jawaban sukses sebelum lanjut
   const maxWaitMs = 6000;     // batas menunggu tambahan untuk model yang lambat
   const good = [];
+  const agents = [];
   let totalTokens = 0;
   let settled = 0;
   const total = FREE_MODELS.length;
@@ -289,6 +294,7 @@ async function chatEnsemble(messages) {
       const content = extractContent(result.value.data);
       if (content) {
         good.push({ modelId: result.value.modelId, content: content });
+        agents.push(result.value.modelId);
         const u = parseUsage(result.value.data);
         if (u) totalTokens += u.tokens;
       }
@@ -345,7 +351,8 @@ async function chatEnsemble(messages) {
   return {
     choices: [{ message: { content: finalContent } }],
     usage: { total_tokens: totalTokens },
-    cost: '0'
+    cost: '0',
+    agents: agents
   };
 }
 
