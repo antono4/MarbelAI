@@ -537,15 +537,71 @@ body {
 .send:active { transform:translateY(0) scale(.97); }
 .send:disabled { opacity:.45; cursor:not-allowed; box-shadow:none; transform:none; }
 
-/* ================== responsive ================== */
+/* ================== responsive (mobile / Android) ================== */
 @media (max-width:700px) {
-  .sidebar { width:74px; flex:0 0 74px; }
+  html,body { overflow:hidden; }
+  body { overflow-x:hidden; }
+
+  /* Sidebar jadi dock tipis berisi tombol icon */
+  .sidebar { width:60px; flex:0 0 60px; padding:10px 8px; gap:12px; }
   .brand { display:none; }
-  .new-thread span,.conv-head > span,.thread-item .tname,#statusLabel { display:none; }
-  .new-thread { padding:9px; }
-  .msg { max-width:100%; }
-  .workspace { flex-direction:column; }
-  .welcome-inner { padding:30px 20px 26px; border-radius:20px; }
+  .conv-head > span { display:none; }
+  .thread-list { max-height:50vh; padding-right:0; }
+  .new-thread span { display:none; }
+  .new-thread { padding:10px; width:44px; height:44px; }
+  .thread-item { padding:8px; justify-content:center; }
+  .thread-item .tid { display:none; }
+  .thread-item .tname { display:none; }
+  #statusLabel { display:none; }
+  .side-btn { width:34px; height:34px; }
+
+  /* Sembunyikan seluruh sidebar → toggle tetap ada */
+  .layout.collapsed .sidebar { width:44px; flex:0 0 44px; padding:10px 6px; }
+
+  /* Main */
+  .main { min-width:0; }
+  .topbar { padding:10px 14px; }
+  .logo-role { display:none; }
   .header-pill { display:none; }
-  .aurora { opacity:.32; }
+
+  /* Thread — full-height scroll area untuk tiap panel */
+  .thread-wrap { min-width:0; }
+  .welcome {
+    flex:1 1 100%;
+    align-items:stretch;
+    padding:14px 12px;
+    overflow-y:auto;
+    overflow-x:hidden;
+    -webkit-overflow-scrolling:touch;
+  }
+  .welcome-inner { padding:26px 16px 22px; border-radius:20px; max-width:100%; width:100%; }
+  .welcome h2 { font-size:clamp(22px,6vw,30px); }
+  .welcome-sub { font-size:13.5px; margin-bottom:22px; }
+  .model-list { max-height:150px; }
+
+  /* Slider agar tak meluber keluar layar */
+  .slider { overflow:hidden; max-width:100%; }
+  .track { width:max-content; }
+  .track button { padding:10px 15px; font-size:12.5px; }
+
+  /* Messages — sembunyikan area kosong saat belum ada chat */
+  .messages {
+    flex:1 1 100%;
+    padding:18px 12px 16px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .messages:empty { flex:0 0 auto; padding:0; min-height:0; }
+  .msg { max-width:100%; }
+  .msg.user { max-width:92%; }
+  .msg.assistant { padding:13px 14px; }
+  .ac-name { max-width:130px; }
+
+  /* Composer tetap dekat keyboard */
+  .composer { margin:8px 12px max(12px, env(safe-area-inset-bottom)); border-radius:16px; padding:8px 10px; }
+  .composer-footer { gap:8px; }
+  .cs-label { display:none; }
+  .custom-select select { max-width:150px; padding:7px 8px; font-size:12px; }
+  .send { width:40px; height:40px; }
+
+  .aurora { opacity:.3; }
 }
