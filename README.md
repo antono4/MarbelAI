@@ -45,7 +45,7 @@ GitHub Pages tidak menjalankan `server.js`. Jika UI di-host statis di GitHub Pag
 API_KEY="sk-..." PORT=12000 ALLOW_ORIGIN=* node server.js
 ```
 
-Default `GHPAGES_BACKEND` di `app.js` menunjuk ke host runtime Marbel AI. Sesuaikan jika backend Anda di alamat lain.
+Default backend di `app.js` menunjuk ke **backend permanen** `https://marbel-ai.onrender.com` (Render). Jika backend permanen belum/sempat tidak merespons, UI otomatis **beralih ke host cadangan** yang masih hidup (`FALLBACK_BACKEND`) — sehingga chat tetap berjalan. Sesuaikan jika backend Anda di alamat lain.
 
 ## Deploy ke backend publik (agar GitHub Pages benar-benar berfungsi)
 

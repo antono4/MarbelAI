@@ -201,14 +201,37 @@
 //
 // Override the backend with ?backend=https://your-host (e.g. your deployed
 // server.js on Render/Railway): https://<user>.github.io/MarbelAI/?backend=...
-const DEFAULT_BACKEND = 'https://work-1-tzykbslejgjfecnu.prod-runtime.all-hands.dev';
+// Backend permanen (Render, menjalankan server.js + 9Router)
+// Jika belum atau sempat tidak merespons, otomatis beralih ke host cadangan yang hidup.
+const DEFAULT_BACKEND = 'https://marbel-ai.onrender.com';
+const FALLBACK_BACKEND = 'https://work-1-rhwmjyzxutavjpml.prod-runtime.all-hands.dev';
 const override = new URLSearchParams(window.location.search).get('backend');
-const GHPAGES_BACKEND = override || DEFAULT_BACKEND;
-const API_BASE =
-  (window.location.hostname.indexOf('github.io') !== -1) ? GHPAGES_BACKEND : '';
-const api = function (path) { return API_BASE + path; };
+let backendInUse = override || DEFAULT_BACKEND;
+const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
+
+function apiBase() {
+  if (!isGitHubPages) return '';
+  return backendInUse;
+}
+const api = function (path) { return apiBase() + path; };
+
+function pickFallback() {
+  if (backendInUse === FALLBACK_BACKEND) return;
+  backendInUse = FALLBACK_BACKEND;
+}
+
+async function ensureBackend() {
+  if (backendInUse !== FALLBACK_BACKEND) {
+    try {
+      const res = await fetch(backendInUse + '/api/models', { method: 'GET', headers: { accept: 'application/json' } });
+      if (res.ok) return;
+    } catch (e) {}
+    pickFallback();
+  }
+}
 
 async function chatRequest(messages) {
+    if (isGitHubPages) await ensureBackend();
     const res = await fetch(api('/api/chat'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -441,7 +464,10 @@ async function chatRequest(messages) {
   }
 
   function loadModels() {
-    fetch(api('/api/models'))
+    Promise.resolve(isGitHubPages ? ensureBackend() : null)
+      .then(function () {
+        return fetch(api('/api/models'));
+      })
       .then(function (r) { return r.json(); })
       .catch(function () { return { data: [] }; })
       .then(function (data) {
