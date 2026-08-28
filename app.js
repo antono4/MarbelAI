@@ -204,7 +204,7 @@
 // Backend permanen (Render, menjalankan server.js → upstream OpenAI-compatible)
 // Jika belum atau sempat tidak merespons, otomatis beralih ke host cadangan yang hidup.
 const DEFAULT_BACKEND = 'https://marbel-ai.onrender.com';
-
+const  FALLBACK_BACKEND  = 'https://marbel-ai.onrender.com';
 const override = new URLSearchParams(window.location.search).get('backend');
 let backendInUse = override || DEFAULT_BACKEND;
 const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
