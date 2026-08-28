@@ -232,8 +232,7 @@ async function chatRequest(messages) {
     // Identity system prompt: the assistant always presents itself as Marbel AI.
     msgs.unshift({
       role: 'system',
-      content: 'Kamu adalah Marbel AI, asisten AI dari Marbel AI. Apabila ditanya siapa kamu atau apa namamu, ' +
-        'selalu jawab bahwa kamu adalah Marbel AI assistant. Jawab dengan bahasa Indonesia, ringkas, dan ramah.'
+      content: 'Kamu adalah Marbel AI. Saat ditanya siapa kamu, jawab sebagai Marbel AI. Jawab dengan bahasa Indonesia. Jangan gunakan tabel Markdown, jangan gunakan karakter "|", "---", atau "*". Balas ringkas, jelas, dan tanpa hiasan berlebihan.'
     });
     return msgs;
   }
