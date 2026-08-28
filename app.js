@@ -14,15 +14,49 @@
   const statusLabel = document.getElementById('statusLabel');
   const sideToggle = document.getElementById('sideToggle');
   const layoutEl = document.querySelector('.layout');
+  const attachBtn = document.getElementById('attachBtn');
+  const fileInput = document.getElementById('fileInput');
+  const attachmentsEl = document.getElementById('attachments');
 
   let busy = false;
   let threadId = 0;
   let threadCount = 0;
-  let history = []; // {id, items:[{role,content}]}
+  let history = []; // {id, items:[{role,content,files?}]}
+  let pendingFiles = []; // {name, size, text}
 
   function setStatus(state, label) {
     statusDot.className = 'dot' + (state ? ' ' + state : '');
     if (label) statusLabel.textContent = label;
+  }
+
+  function formatSize(bytes) {
+    if (!bytes) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function renderAttachments() {
+    attachmentsEl.innerHTML = '';
+    if (pendingFiles.length === 0) {
+      attachmentsEl.hidden = true;
+      return;
+    }
+    attachmentsEl.hidden = false;
+    pendingFiles.forEach(function (f, i) {
+      const chip = document.createElement('span');
+      chip.className = 'attach-chip';
+      const ext = (f.name.split('.').pop() || '').toLowerCase();
+      chip.innerHTML = '<span class="ac-icon">' + esc(ext.slice(0, 4) || 'file') + '</span>' +
+        '<span class="ac-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+        '<span class="ac-size">' + esc(formatSize(f.size)) + '</span>' +
+        '<button type="button" class="ac-remove" title="Hapus lampiran">×</button>';
+      chip.querySelector('.ac-remove').addEventListener('click', function () {
+        pendingFiles.splice(i, 1);
+        renderAttachments();
+      });
+      attachmentsEl.appendChild(chip);
+    });
   }
 
   function esc(s) {
@@ -48,10 +82,26 @@
     }).join('');
   }
 
-  function addUserMessage(content) {
+  function addUserMessage(content, files) {
     const el = document.createElement('div');
     el.className = 'msg user';
-    el.textContent = content;
+    if (files && files.length) {
+      const chips = document.createElement('div');
+      chips.className = 'msg-files';
+      chips.innerHTML = files.map(function (f) {
+        const ext = (f.name.split('.').pop() || '').toLowerCase();
+        return '<span class="attach-chip static"><span class="ac-icon">' + esc(ext.slice(0, 4) || 'file') + '</span>' +
+          '<span class="ac-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+          '<span class="ac-size">' + esc(formatSize(f.size)) + '</span></span>';
+      }).join('');
+      el.appendChild(chips);
+    }
+    if (content) {
+      const body = document.createElement('div');
+      body.className = 'ubody';
+      body.textContent = content;
+      el.appendChild(body);
+    }
     messagesEl.appendChild(el);
     scrollDown();
     return el;
@@ -162,7 +212,22 @@ async function chatRequest(messages) {
 
   function buildThreadHistory() {
     const msgs = history.map(function (h) {
-      return h.items.map(function (i) { return { role: i.role, content: i.content }; });
+      return h.items.map(function (i) {
+        if (i.files && i.files.length) {
+          const parts = ['Lampiran:\n'];
+          i.files.forEach(function (f) {
+            parts.push('- ' + f.name + (f.size ? ' (' + formatSize(f.size) + ')' : '') + '\n');
+            if (f.text) {
+              parts.push('```\n' + f.text.slice(0, 8000) + (f.text.length > 8000 ? '\n…(terpotong)' : '') + '\n```\n');
+            }
+          });
+          return [
+            { role: i.role, content: i.content },
+            { role: 'user', content: parts.join('') },
+          ];
+        }
+        return { role: i.role, content: i.content };
+      });
     }).flat();
     // Identity system prompt: the assistant always presents itself as Marbel AI.
     msgs.unshift({
@@ -193,6 +258,8 @@ async function chatRequest(messages) {
     welcomeEl.style.display = '';
     activeBadge.classList.remove('show');
     input.value = '';
+    pendingFiles = [];
+    renderAttachments();
     resize();
     updateThreadList();
   }
@@ -205,7 +272,7 @@ async function chatRequest(messages) {
     welcomeEl.style.display = 'none';
     activeBadge.classList.remove('show');
     th.items.forEach(function (i) {
-      if (i.role === 'user') addUserMessage(i.content);
+      if (i.role === 'user') addUserMessage(i.content, i.files);
       else addAssistantMessage(i.content);
     });
     updateThreadList();
@@ -218,7 +285,8 @@ async function chatRequest(messages) {
 
   async function onSend(rawText) {
     const text = (rawText != null ? rawText : input.value).trim();
-    if (!text || busy) return;
+    const files = rawText == null ? pendingFiles.slice() : [];
+    if ((!text && files.length === 0) || busy) return;
 
     if (history.length === 0) newThread();
 
@@ -227,12 +295,14 @@ async function chatRequest(messages) {
     showChat();
     activeBadge.classList.add('show');
     input.value = '';
+    pendingFiles = [];
+    renderAttachments();
     resize();
     setStatus('on', 'memproses…');
 
     const current = history.find(function (h) { return h.id === threadId; });
-    current.items.push({ role: 'user', content: text });
-    addUserMessage(text);
+    current.items.push({ role: 'user', content: text, files: files });
+    addUserMessage(text, files);
 
     // check whether the selected provider/model actually has credentials
     const activePill = modelListEl.querySelector('.mname[data-active="1"]');
@@ -275,6 +345,22 @@ async function chatRequest(messages) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
   });
   newThreadBtn.addEventListener('click', newThread);
+  attachBtn.addEventListener('click', function () { if (!busy) fileInput.click(); });
+  fileInput.addEventListener('change', function () {
+    const list = Array.from(fileInput.files || []);
+    const reads = list.map(function (f) {
+      return f.text().then(function (texts) {
+        return { name: f.name, size: f.size, type: f.type || '', text: texts };
+      }).catch(function () {
+        return { name: f.name, size: f.size, type: f.type || '', text: '' };
+      });
+    });
+    Promise.all(reads).then(function (files) {
+      pendingFiles = pendingFiles.concat(files);
+      fileInput.value = '';
+      renderAttachments();
+    });
+  });
   sideToggle.addEventListener('click', function () {
     layoutEl.classList.toggle('collapsed');
     sideToggle.title = layoutEl.classList.contains('collapsed')

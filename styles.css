@@ -445,11 +445,49 @@ body {
 }
 .composer:focus-within { border-color:rgba(184,240,76,.42); box-shadow:0 0 0 3px rgba(184,240,76,.08),0 22px 70px rgba(0,0,0,.5); }
 
-.composer-header { display:flex; align-items:center; margin-bottom:4px; }
+.composer-header { display:flex; align-items:center; margin-bottom:6px; }
 .composer-header .spacer { flex:1; }
 .attach { display:inline-flex; align-items:center; gap:6px; background:transparent; border:none; color:var(--muted); font-size:12.5px; font-family:inherit; cursor:pointer; padding:6px 9px; border-radius:9px; transition:color .13s ease,background .13s ease; }
 .attach:hover { color:var(--text); background:var(--panel-2); }
+.attach:disabled { opacity:.5; cursor:not-allowed; }
 .attach svg { color:var(--accent-dim); }
+
+/* ================== attachments ================== */
+.attachments {
+  display:flex; flex-wrap:wrap; gap:7px;
+  padding:2px 2px 4px;
+}
+.msg-files { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:8px; }
+.attach-chip {
+  display:inline-flex; align-items:center; gap:7px;
+  background:var(--panel-2);
+  border:1px solid var(--line-2);
+  border-radius:10px;
+  padding:5px 8px 5px 5px;
+  font-size:12px;
+  max-width:100%;
+  animation:rise .25s ease both;
+}
+.attach-chip.static { padding:5px 10px 5px 5px; }
+.ac-icon {
+  flex:0 0 auto; min-width:26px; height:24px;
+  display:grid; place-items:center;
+  background:linear-gradient(135deg,rgba(184,240,76,.18),rgba(63,214,141,.12));
+  color:var(--accent);
+  border-radius:7px;
+  font-family:var(--mono); font-weight:700; font-size:9px; text-transform:uppercase;
+  letter-spacing:.02em;
+}
+.ac-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:210px; color:var(--text); }
+.ac-size { flex:0 0 auto; font-size:10.5px; color:var(--muted); font-family:var(--mono); }
+.ac-remove {
+  flex:0 0 auto; width:19px; height:19px; border-radius:6px;
+  background:transparent; border:none; color:var(--muted);
+  display:grid; place-items:center;
+  cursor:pointer; font-size:14px; line-height:1;
+  transition:background .12s ease,color .12s ease;
+}
+.ac-remove:hover { background:rgba(244,103,93,.16); color:var(--err); }
 
 .composer textarea {
   width:100%;
