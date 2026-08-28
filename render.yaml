@@ -1,5 +1,6 @@
-# Render Blueprint — deploy backend Marbel AI bersama upstream "9route" dalam satu deploy.
-# Cara pakai: buat "New Blueprint" di Render, hubungkan repo ini — Render membuat kedua service sekaligus.
+# Render Blueprint — deploy backend Marbel AI satu deploy.
+# Cara pakai: buat "New Blueprint" di Render, hubungkan repo ini — Render membuat service di atas.
+# UPSTREAM menunjuk ke endpoint OpenAI-compatible "Zen" (opencode.ai/zen/v1), gratis dan tanpa API key.
 services:
   - type: web
     name: marbel-ai
@@ -11,9 +12,9 @@ services:
     envVars:
       - key: PORT
         value: 10000
-      # UPSTREAM: URL publik service "9route" yang juga dideploy oleh blueprint ini.
+      # UPSTREAM: endpoint OpenAI-compatible (Zen — opencode.ai/zen/v1), gratis tanpa API key.
       - key: UPSTREAM
-        value: https://9route.onrender.com
+        value: https://opencode.ai/zen
       - key: API_KEY
         sync: false
       - key: ALLOW_ORIGIN
@@ -21,12 +22,4 @@ services:
       - key: USE_SSE
         value: "0"
 
-  - type: web
-    name: 9route
-    runtime: node
-    plan: free
-    repo: https://github.com/antono4/9router
-    branch: master
-    buildCommand: npm install && npm run build
-    startCommand: node custom-server.js --port 10000
-    healthCheckPath: /
+
