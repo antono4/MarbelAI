@@ -130,5 +130,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`9Router UI listening on http://0.0.0.0:${PORT} (proxy -> ${UPSTREAM})`);
+  console.log(`Marbel AI UI listening on http://0.0.0.0:${PORT} (proxy -> ${UPSTREAM})`);
 });

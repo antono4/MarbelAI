@@ -201,10 +201,10 @@
 //
 // Override the backend with ?backend=https://your-host (e.g. your deployed
 // server.js on Render/Railway): https://<user>.github.io/MarbelAI/?backend=...
-// Backend permanen (Render, menjalankan server.js + 9Router)
+// Backend permanen (Render, menjalankan server.js → upstream OpenAI-compatible)
 // Jika belum atau sempat tidak merespons, otomatis beralih ke host cadangan yang hidup.
 const DEFAULT_BACKEND = 'https://marbel-ai.onrender.com';
-const FALLBACK_BACKEND = 'https://work-1-tzykbslejgjfecnu.prod-runtime.all-hands.dev';
+const FALLBACK_BACKEND = 'https://work-1-ylcvpqnpdkjjvgna.prod-runtime.all-hands.dev';
 const override = new URLSearchParams(window.location.search).get('backend');
 let backendInUse = override || DEFAULT_BACKEND;
 const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
@@ -352,12 +352,12 @@ async function chatRequest(messages) {
     const typing = typingIndicator();
 
     try {
-      if (!selectedActive && !/^oc\//.test(model.value)) {
+      if (!selectedActive && model.value.indexOf('free') === -1) {
         throw new Error(
           'Model "' + model.value + '" belum dapat dipakai karena provider-nya belum ' +
-          'dihubungkan di 9Router (tidak ada API key/kredensial).\n\n' +
-          'Gunakan model "oc/..." (OpenCode, gratis, tanpa akun) yang tersedia, atau ' +
-          'hubungkan provider lain terlebih dahulu di dashboard 9Router.'
+          'terhubung (tidak ada API key/kredensial).\n\n' +
+          'Gunakan model gratis yang tersedia (mis. "mimo-v2.5-free"), atau ' +
+          'hubungkan provider lain terlebih dahulu di backend.'
         );
       }
       const data = await chatRequest(buildThreadHistory());
@@ -460,7 +460,7 @@ async function chatRequest(messages) {
       model.appendChild(opt);
     });
     // keep a sensible default
-    model.value = 'oc/mimo-v2.5-free';
+    model.value = 'mimo-v2.5-free';
   }
 
   function loadModels() {
@@ -473,11 +473,12 @@ async function chatRequest(messages) {
       .then(function (data) {
         let all = (data.data || []).map(function (m) { return m.id; });
         // Verified-working free models (OpenCode, no account needed).
+        // Zen (opencode.ai/zen/v1) melaporkan id model tanpa prefiks "oc/".
         const candidates = [
-          'oc/mimo-v2.5-free',
-          'oc/hy3-free',
-          'oc/laguna-s-2.1-free',
-          'oc/nemotron-3.5-lightning-free'
+          'mimo-v2.5-free',
+          'hy3-free',
+          'laguna-s-2.1-free',
+          'nemotron-3.5-lightning-free'
         ];
         // Only show models that are actually ready to use.
         candidates.forEach(function (id) {

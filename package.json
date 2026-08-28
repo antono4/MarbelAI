@@ -1,7 +1,7 @@
 {
   "name": "marbel-ai",
   "version": "1.0.0",
-  "description": "Marbel AI chat UI - backend proxy to 9Router + static UI",
+  "description": "Marbel AI chat UI - backend proxy ke endpoint OpenAI-compatible + static UI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
