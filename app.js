@@ -17,6 +17,7 @@
   const attachBtn = document.getElementById('attachBtn');
   const fileInput = document.getElementById('fileInput');
   const attachmentsEl = document.getElementById('attachments');
+  const themeSwitch = document.querySelector('.theme-switch');
 
   let busy = false;
   let threadId = 0;
@@ -27,6 +28,25 @@
   function setStatus(state, label) {
     statusDot.className = 'dot' + (state ? ' ' + state : '');
     if (label) statusLabel.textContent = label;
+  }
+
+  const THEMES = ['green', 'ocean', 'sunset', 'light'];
+
+  function setTheme(name, save) {
+    if (THEMES.indexOf(name) === -1) name = 'green';
+    document.documentElement.dataset.theme = name;
+    document.querySelectorAll('.tsw-btn').forEach(function (btn) {
+      btn.classList.toggle('active', btn.dataset.theme === name);
+    });
+    if (save !== false) {
+      try { localStorage.setItem('marbel-theme', name); } catch (e) {}
+    }
+  }
+
+  function initTheme() {
+    let saved = 'green';
+    try { saved = localStorage.getItem('marbel-theme') || 'green'; } catch (e) {}
+    setTheme(saved, false);
   }
 
   function formatSize(bytes) {
@@ -366,6 +386,12 @@ async function chatRequest(messages) {
       ? 'Tampilkan sidebar'
       : 'Sembunyikan sidebar';
   });
+  if (themeSwitch) {
+    themeSwitch.addEventListener('click', function (e) {
+      const btn = e.target.closest('.tsw-btn');
+      if (btn) setTheme(btn.dataset.theme);
+    });
+  }
   suggestions.addEventListener('click', function (e) {
     const btn = e.target.closest('button[data-prompt]');
     if (btn) onSend(btn.getAttribute('data-prompt'));
@@ -442,6 +468,7 @@ async function chatRequest(messages) {
       });
   }
 
+  initTheme();
   newThread();
   loadModels();
 })();
