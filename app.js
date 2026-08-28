@@ -200,32 +200,38 @@ function isTransientError(err) {
   return err instanceof TypeError || /fetch|network|failed|econnreset|socket/i.test(err.message || '');
 }
 
-async function chatRequest(messages) {
-  if (isGitHubPages) await ensureBackend();
-  const maxAttempts = 3;
-  const candidateModels = (function () {
-    const list = [model.value];
-    FREE_MODELS.forEach(function (id) { if (list.indexOf(id) === -1) list.push(id); });
-    return list;
-  })();
-  let modelIndex = 0;
+// Kirim satu permintaan ke satu model, dengan retry singkat untuk error transien
+// dan batas waktu per permintaan agar satu model yang menggantung tidak
+// menahan seluruh ensemble.
+async function chatOnce(modelId, messages) {
+  const maxAttempts = 2;
+  const timeoutMs = 15000;
   let lastError;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const currentModel = candidateModels[Math.min(modelIndex, candidateModels.length - 1)];
+  function fetchWithTimeout() {
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    let timer = null;
+    if (ctrl) {
+      timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+    }
+    return fetch(api('/api/chat'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: modelId, messages, stream: false }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).finally(function () { if (timer) clearTimeout(timer); });
+  }
 
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let res;
     try {
-      res = await fetch(api('/api/chat'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: currentModel, messages, stream: false }),
-      });
+      res = await fetchWithTimeout();
     } catch (e) {
-      if (attempt < maxAttempts && isTransientError(e)) {
+      // Timeout/abort tidak diulang: model yang lambat dibiarkan gagal cepat,
+      // ensemble tetap berjalan dengan model lain.
+      if (attempt < maxAttempts && isTransientError(e) && !/abort|timeout/i.test(e.message || '')) {
         lastError = e;
-        setStatus('on', 'jaringan bermasalah — mencoba lagi ' + attempt + '/' + (maxAttempts - 1) + '…');
-        await sleep(1000 * Math.pow(2, attempt - 1));
+        await sleep(1000 * attempt);
         continue;
       }
       throw e;
@@ -238,23 +244,109 @@ async function chatRequest(messages) {
     const message = (data && data.error && data.error.message) ||
       (data ? '' : 'Respons dari server bukan format JSON (HTTP ' + status + '). ' + text.trim().slice(0, 120));
 
-    if (res.ok && data) return data;
+    if (res.ok && data) return { modelId: modelId, data: data };
 
     const err = new Error(message || ('HTTP ' + status));
+    lastError = err;
     if (attempt < maxAttempts && isRetryable(status, message)) {
-      lastError = err;
-      if (modelIndex < candidateModels.length - 1) {
-        modelIndex++;
-        setStatus('on', 'model sibuk — beralih ke ' + candidateModels[modelIndex] + '…');
-      } else {
-        setStatus('on', 'server sibuk — mencoba lagi ' + attempt + '/' + (maxAttempts - 1) + '…');
-        await sleep(1000 * Math.pow(2, attempt - 1));
-      }
+      await sleep(1000 * attempt);
       continue;
     }
     throw err;
   }
   throw lastError;
+}
+
+function ensemblePrompt(question, answers) {
+  const blocks = answers.map(function (a, i) {
+    return 'Jawaban ' + (i + 1) + ' (model: ' + a.modelId + '):\n' + a.content;
+  }).join('\n\n');
+  return 'Pertanyaan pengguna:\n' + question + '\n\n' +
+    'Berikut adalah beberapa jawaban dari model yang berbeda:\n\n' + blocks + '\n\n' +
+    'Gabungkan jawaban-jawaban di atas menjadi satu jawaban terbaik yang paling akurat, ' +
+    'lengkap, dan jelas. Pilih fakta yang paling tepat, buang yang keliru atau berulang, ' +
+    'dan jawab dalam bahasa Indonesia. Jangan gunakan tabel Markdown, karakter "|", "---", atau "*".';
+}
+
+// Jalankan keempat model secara paralel lalu gabungkan hasilnya (ensemble)
+// agar lebih akurat. Kita tidak menunggu semua model selesai: begitu minimal
+// 2 model berhasil (atau batas waktu singkat tercapai), langsung digabungkan,
+// sehingga model yang menggantung/error tidak menahan jawaban.
+async function chatEnsemble(messages) {
+  if (isGitHubPages) await ensureBackend();
+
+  const lastUser = (messages.slice().reverse().find(function (m) { return m.role === 'user'; }) || {}).content || '';
+  const minGood = 2;          // minimal jawaban sukses sebelum lanjut
+  const maxWaitMs = 6000;     // batas menunggu tambahan untuk model yang lambat
+  const good = [];
+  let totalTokens = 0;
+  let settled = 0;
+  const total = FREE_MODELS.length;
+
+  function collect(result) {
+    settled++;
+    if (result.status === 'fulfilled') {
+      const content = extractContent(result.value.data);
+      if (content) {
+        good.push({ modelId: result.value.modelId, content: content });
+        const u = parseUsage(result.value.data);
+        if (u) totalTokens += u.tokens;
+      }
+    }
+  }
+
+  function shouldResolve() {
+    return good.length >= minGood || settled >= total || good.length === 1 && settled >= total;
+  }
+
+  const pending = FREE_MODELS.map(function (id) {
+    return chatOnce(id, messages).then(
+      function (v) { collect({ status: 'fulfilled', value: v }); },
+      function (e) { collect({ status: 'rejected', reason: e }); }
+    );
+  });
+
+  // Tunggu minimal minGood jawaban sukses, atau semua selesai, atau batas waktu.
+  await Promise.race([
+    Promise.all(pending),
+    new Promise(function (resolve) {
+      const iv = setInterval(function () {
+        if (shouldResolve()) { clearInterval(iv); resolve(); }
+      }, 100);
+      setTimeout(function () { clearInterval(iv); resolve(); }, maxWaitMs);
+    })
+  ]);
+
+  if (good.length === 0) {
+    throw new Error('Semua model gagal merespons. Silakan coba lagi beberapa saat.');
+  }
+
+  let finalContent;
+  if (good.length === 1) {
+    finalContent = good[0].content;
+  } else {
+    // Gunakan model pertama yang berhasil sebagai "perangkum" jawaban ensemble.
+    const aggregator = good[0].modelId;
+    const aggMessages = [
+      { role: 'system', content: 'Kamu adalah Marbel AI. Jawab dengan bahasa Indonesia, ringkas dan jelas.' },
+      { role: 'user', content: ensemblePrompt(lastUser, good) }
+    ];
+    try {
+      setStatus('on', 'menggabungkan ' + good.length + ' jawaban model…');
+      const agg = await chatOnce(aggregator, aggMessages);
+      finalContent = extractContent(agg.data);
+      const u = parseUsage(agg.data);
+      if (u) totalTokens += u.tokens;
+    } catch (e) {
+      finalContent = good[0].content;
+    }
+  }
+
+  return {
+    choices: [{ message: { content: finalContent } }],
+    usage: { total_tokens: totalTokens },
+    cost: '0'
+  };
 }
 
   function buildThreadHistory() {
@@ -332,21 +424,11 @@ async function chatRequest(messages) {
     current.items.push({ role: 'user', content: text });
     addUserMessage(text);
 
-    // check whether the selected provider/model actually has credentials
-    const activePill = modelListEl.querySelector('.mname[data-active="1"]');
-    const selectedActive = activePill && model.value === activePill.textContent;
     const typing = typingIndicator();
 
     try {
-      if (!selectedActive && model.value.indexOf('free') === -1) {
-        throw new Error(
-          'Model "' + model.value + '" belum dapat dipakai karena provider-nya belum ' +
-          'terhubung (tidak ada API key/kredensial).\n\n' +
-          'Gunakan model gratis yang tersedia (mis. "mimo-v2.5-free"), atau ' +
-          'hubungkan provider lain terlebih dahulu di backend.'
-        );
-      }
-      const data = await chatRequest(buildThreadHistory());
+      setStatus('on', 'memproses dengan 4 model…');
+      const data = await chatEnsemble(buildThreadHistory());
       typing.remove();
       const content = extractContent(data) || '(respons kosong)';
       const usage = parseUsage(data);
