@@ -3,13 +3,36 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Marbel AI — Chat AI</title>
+<title>Marbel AI — Chat AI Gratis</title>
+<meta name="theme-color" content="#07090d" />
+<meta name="description" content="Marbel AI — mengobrol dengan beragam model AI gratis." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23b8f04c'/%3E%3Cpath d='M8 17l5 5L24 11' stroke='%23141c0a' stroke-width='4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- ambient aurora background -->
+  <div class="bg-scene" aria-hidden="true">
+    <div class="aurora a1"></div>
+    <div class="aurora a2"></div>
+    <div class="aurora a3"></div>
+    <div class="grid-overlay"></div>
+  </div>
+
   <div class="layout">
     <!-- ============ Sidebar ============ -->
     <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13l5 5L20 7"/></svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">Marbel AI</span>
+          <span class="brand-tag">Free AI Workspace</span>
+        </div>
+      </div>
       <div class="side-top">
         <button class="new-thread" id="newThread">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
@@ -37,6 +60,9 @@
           <span class="logo-name">Marbel AI</span>
           <span class="logo-role">AI Engineer</span>
         </div>
+        <div class="topbar-right">
+          <span class="header-pill"><span class="hp-dot"></span>AI gratis · tanpa akun</span>
+        </div>
       </header>
 
       <div class="workspace">
@@ -44,7 +70,8 @@
         <!-- Welcome screen (hidden once a chat is active) -->
         <div id="welcome" class="welcome">
           <div class="welcome-inner">
-            <h2>Mari mulai berkarya</h2>
+            <span class="eyebrow">✦ Selamat datang di Marbel AI</span>
+            <h2>Mari mulai <span class="grad">berkarya</span></h2>
             <p class="welcome-sub">
               Mengobrol dengan beragam model AI gratis lewat Marbel AI. Pilih topik<br/>
               di bawah, atau langsung tulis pertanyaan Anda.
