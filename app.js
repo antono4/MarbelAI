@@ -211,8 +211,8 @@ async function chatRequest(messages) {
   }
 
   function buildThreadHistory() {
-    const msgs = history.map(function (h) {
-      return h.items.map(function (i) {
+    const msgs = history.flatMap(function (h) {
+      return h.items.flatMap(function (i) {
         if (i.files && i.files.length) {
           const parts = ['Lampiran:\n'];
           i.files.forEach(function (f) {
@@ -228,7 +228,7 @@ async function chatRequest(messages) {
         }
         return { role: i.role, content: i.content };
       });
-    }).flat();
+    });
     // Identity system prompt: the assistant always presents itself as Marbel AI.
     msgs.unshift({
       role: 'system',
