@@ -1,6 +1,6 @@
 # Marbel AI
 
-Chat UI untuk mengakses beragam model AI **gratis** melalui [9Router](https://github.com/decolua/9router). Tampilan meniru gaya agent chat dengan sidebar, welcome screen, slider topik, dan daftar model yang siap dipakai.
+Chat UI untuk mengakses beragam model AI **gratis** melalui [9Router](https://github.com/decolua/9router). Tampilan dan gaya agent chat dengan sidebar, welcome screen, slider topik, dan daftar model yang siap dipakai.
 
 ## Fitur
 
