@@ -204,7 +204,7 @@
 // Backend permanen (Render, menjalankan server.js + 9Router)
 // Jika belum atau sempat tidak merespons, otomatis beralih ke host cadangan yang hidup.
 const DEFAULT_BACKEND = 'https://marbel-ai.onrender.com';
-const FALLBACK_BACKEND = 'https://work-1-rhwmjyzxutavjpml.prod-runtime.all-hands.dev';
+//const FALLBACK_BACKEND = 'https://work-1-rhwmjyzxutavjpml.prod-runtime.all-hands.dev';
 const override = new URLSearchParams(window.location.search).get('backend');
 let backendInUse = override || DEFAULT_BACKEND;
 const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
