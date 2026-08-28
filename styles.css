@@ -21,9 +21,9 @@
   --ok:#b8f04c;
   --err:#f4675d;
   --code:#9ad6c9;
-  --font-display:"Sora","Spectral",Georgia,serif;
-  --font-body:"Inter","Karla","Segoe UI",system-ui,sans-serif;
-  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --font-display:"Plus Jakarta Sans","Manrope",system-ui,sans-serif;
+  --font-body:"Manrope","Inter","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --glass:rgba(13,18,22,.66);
   --glass-strong:rgba(9,12,15,.85);
 }
