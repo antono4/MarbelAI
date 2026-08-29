@@ -515,6 +515,10 @@ async function chatEnsemble(messages) {
       if (!seen[id]) { seen[id] = 1; merged.push(id); }
     });
     model.innerHTML = '';
+    const semua = document.createElement('option');
+    semua.value = 'semua';
+    semua.textContent = 'Semua Model (' + merged.length + ' — gabungan)';
+    model.appendChild(semua);
     merged.forEach(function (id) {
       const opt = document.createElement('option');
       opt.value = id;
@@ -522,7 +526,7 @@ async function chatEnsemble(messages) {
       model.appendChild(opt);
     });
     // keep a sensible default
-    model.value = 'mimo-v2.5-free';
+    model.value = 'semua';
   }
 
   function loadModels() {
