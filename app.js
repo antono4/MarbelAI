@@ -250,7 +250,7 @@
     input.style.height = Math.min(input.scrollHeight, 220) + 'px';
   }
 
-  async function onSend(rawText) {
+    async function onSend(rawText) {
     const text = (rawText != null ? rawText : input.value).trim();
     if (!text || busy) return;
 
@@ -272,12 +272,79 @@
     const selected = model.value;
     
     try {
-      // Hapus indikator typing, buat bubble chat kosong untuk diisi stream
       typing.remove();
       const msgEls = createAssistantMessage();
       
       let fullText = '';
       let lastRender = 0;
+      
+      const renderChunk = (text) => {
+        fullText = text;
+        const now = Date.now();
+        if (now - lastRender > 50) {
+          lastRender = now;
+          msgEls.inner.innerHTML = decorateText(fullText);
+          scrollDown();
+        }
+      };
+
+      // Tentukan daftar model yang akan dicoba
+      let modelsToTry = [];
+      if (selected && selected !== 'semua') {
+        modelsToTry.push(selected);
+      }
+      // Tambahkan semua model gratis sebagai cadangan jika model utama gagal
+      FREE_MODELS.forEach(function(m) {
+        if (modelsToTry.indexOf(m) === -1) modelsToTry.push(m);
+      });
+
+      let success = false;
+      let lastError = null;
+
+      // Coba model satu per satu sampai ada yang berhasil
+      for (let i = 0; i < modelsToTry.length; i++) {
+        let modelToUse = modelsToTry[i];
+        try {
+          setStatus('on', 'mencoba model: ' + modelToUse + '…');
+          await streamChat(modelToUse, buildThreadHistory(), renderChunk);
+          success = true;
+          break; // Berhenti jika sudah dapat jawaban
+        } catch (err) {
+          console.warn('Model ' + modelToUse + ' gagal:', err.message);
+          lastError = err;
+          // Jika bukan error 503/502/429, langsung lempar error (tidak usah coba model lain)
+          if (!/503|502|429|500|upstream/i.test(err.message)) {
+            throw err;
+          }
+          // Jika error 503, lanjut mencoba model berikutnya
+        }
+      }
+
+      if (!success) {
+        throw lastError || new Error('Semua model sedang tidak tersedia.');
+      }
+      
+      // Render final
+      msgEls.inner.innerHTML = decorateText(fullText);
+      current.items.push({ role: 'assistant', content: fullText });
+      setStatus('on', 'terhubung');
+    } catch (err) {
+      typing.remove();
+      const friendly = 'Terjadi kesalahan saat menghubungi server.\nDetail: ' + err.message + '\n\nMohon tunggu beberapa saat lalu coba lagi.';
+      current.items.push({ role: 'assistant', content: friendly });
+      
+      const errEl = createAssistantMessage();
+      errEl.wrap.classList.add('err');
+      errEl.inner.innerHTML = decorateText(friendly);
+      
+      setStatus('err', 'gagal');
+    } finally {
+      busy = false;
+      sendBtn.disabled = false;
+      activeBadge.classList.remove('show');
+      updateThreadList();
+    }
+  }
       
       // Fungsi untuk merender teks ke layar (di-throttle agar tidak lag)
       const renderChunk = (text) => {
