@@ -312,11 +312,11 @@
         } catch (err) {
           console.warn('Model ' + modelToUse + ' gagal:', err.message);
           lastError = err;
-          // Jika bukan error 503/502/429, langsung lempar error (tidak usah coba model lain)
-          if (!/503|502|429|500|upstream/i.test(err.message)) {
+          // Selalu lanjut ke model cadangan untuk error HTTP 4xx/5xx
+          // atau error upstream (timeout/proxy), agar user tetap dapat jawaban.
+          if (!/4\d{2}|5\d{2}|upstream/i.test(err.message)) {
             throw err;
           }
-          // Jika error 503, lanjut mencoba model berikutnya
         }
       }
 
