@@ -301,22 +301,30 @@
       let success = false;
       let lastError = null;
 
-      // Coba model satu per satu sampai ada yang berhasil
-      for (let i = 0; i < modelsToTry.length; i++) {
-        let modelToUse = modelsToTry[i];
-        try {
-          setStatus('on', 'mencoba model: ' + modelToUse + '…');
-          await streamChat(modelToUse, buildThreadHistory(), renderChunk);
-          success = true;
-          break; // Berhenti jika sudah dapat jawaban
-        } catch (err) {
-          console.warn('Model ' + modelToUse + ' gagal:', err.message);
-          lastError = err;
-          // Selalu lanjut ke model cadangan untuk error HTTP 4xx/5xx
-          // atau error upstream (timeout/proxy), agar user tetap dapat jawaban.
+      // Upstream gratis sering 503 sesaat; coba ulang penuh dengan backoff agar
+      // user tetap dapat jawaban begitu provider pulih (maks 3x percobaan),
+      const MAX_ATTEMPTS = 3;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !success; attempt++) {
+        if (attempt > 0) {
+          setStatus('on', 'server sibuk, mencoba lagi… (' + attempt + '/' + (MAX_ATTEMPTS - 1) + ')');
+          await new Promise(r => setTimeout(r, attempt * 1500)); // 1.5s,, 3s
+        }
+        for (let i =0; i < modelsToTry.length; i++) {
+          let modelToUse = modelsToTry[i];
+          try {
+            setStatus('on', 'mencoba model: ' + modelToUse + '…');
+            await streamChat(modelToUse, buildThreadHistory(), renderChunk);
+            success = true;
+            break; // Berhenti jika sudah dapat jawaban
+          } catch (err) {
+            console.warn('Model ' + modelToUse + ' gagal:', err.message);
+            lastError = err;
+            // Selalu lanjut ke model cadangan untuk error HTTP 4xx/5xx
+            // atau error upstream (timeout/proxy), agar user tetap dapat jawaban.
 
-          if (!/4\d{2}|5\d{2}|upstream/i.test(err.message)) {
-            throw err;
+            if (!/4\d{2}|5\d{2}|upstream/i.test(err.message)) {
+              throw err;
+            }
           }
         }
       }
