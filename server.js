@@ -59,12 +59,16 @@ function proxyOpenAI(req, res) {
     req.on('end', () => {
       const isStream = USE_SSE === '1';
       const clientAuth = req.headers.authorization || '';
+      const authHeader = clientAuth || (API_KEY ? 'Bearer ' + API_KEY : '');
       const headers = {
         'content-type': 'application/json',
-        'authorization': clientAuth || (API_KEY ? 'Bearer ' + API_KEY : ''),
         'accept': isStream ? 'text/event-stream' : (req.headers.accept || 'application/json'),
       };
+      if (authHeader) headers.authorization = authHeader;
       const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const upstreamTimeout = setTimeout(() => {
+        upstreamReq.destroy(new Error('upstream timeout'));
+      }, 30000);
       const upstreamReq = ssl.request(
         UPSTREAM + '/v1/chat/completions',
         { method: 'POST', headers },
@@ -76,12 +80,17 @@ function proxyOpenAI(req, res) {
           }
           target.writeHead(upRes.statusCode || 502);
           upRes.pipe(target);
-          upRes.on('end', resolve);
+          upRes.on('end', () => { clearTimeout(upstreamTimeout); resolve(); });
         }
       );
       upstreamReq.on('error', (e) => {
-        res.writeHead(502, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: 'Upstream error: ' + e.message } }));
+        clearTimeout(upstreamTimeout);
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'Upstream error: ' + e.message } }));
+        } else {
+          res.end();
+        }
         resolve();
       });
       upstreamReq.write(JSON.stringify(payload));
@@ -109,12 +118,25 @@ const server = http.createServer(async (req, res) => {
       await proxyOpenAI(req, res);
     } else if (req.method === 'GET' && urlPath === '/api/models') {
       applyCors(res);
-      ssl.get(UPSTREAM + '/v1/models', { headers: { accept: 'application/json' } }, (upRes) => {
+      let modelsReq = null;
+      const modelsTimer = setTimeout(() => {
+        if (modelsReq) modelsReq.destroy(new Error('upstream timeout'));
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ data: [] }));
+        }
+      }, 15000);
+      modelsReq = ssl.get(UPSTREAM + '/v1/models', { headers: { accept: 'application/json' } }, (upRes) => {
+        clearTimeout(modelsTimer);
         res.writeHead(upRes.statusCode || 200, { 'content-type': 'application/json' });
         upRes.pipe(res);
-      }).on('error', () => {
-        res.writeHead(502, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ data: [] }));
+      });
+      modelsReq.on('error', () => {
+        clearTimeout(modelsTimer);
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ data: [] }));
+        }
       });
     } else if (req.method === 'GET') {
       serveStatic(res, urlPath === '/' ? '/index.html' : urlPath);

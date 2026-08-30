@@ -168,7 +168,10 @@ const override = new URLSearchParams(window.location.search).get('backend');
 let backendInUse = override || DEFAULT_BACKEND;
 const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
 // Free models (OpenCode/Zen, no account) — order is the fallback priority.
-const FREE_MODELS = ['mimo-v2.5-free', 'hy3-free', 'laguna-s-2.1-free', 'nemotron-3.5-lightning-free'];
+// Only models that the Zen upstream currently serves are listed: ling & nemotron-3
+// are fast and stable; mimo is popular (occasionally rate-limited); laguna is slower
+// but still works. hy3-free and nemotron-3.5-lightning-free are removed (unsupported/slow)。
+const FREE_MODELS = ['ling-3.0-flash-fin-free', 'nemotron-3-ultra-free', 'mimo-v2.5-free', 'laguna-s-2.1-free'];
 
 function apiBase() {
   if (!isGitHubPages) return '';
@@ -271,22 +274,48 @@ function ensemblePrompt(question, answers) {
     'lengkap, dan jelas. Pilih fakta yang paling tepat, buang yang keliru atau berulang, ' +
     'dan jawab dalam bahasa Indonesia. Jangan gunakan tabel Markdown, karakter "|", "---", atau "*".';
 }
-
-// Jalankan keempat model secara paralel lalu gabungkan hasilnya (ensemble)
-// agar lebih akurat. Kita tidak menunggu semua model selesai: begitu minimal
-// 2 model berhasil (atau batas waktu singkat tercapai), langsung digabungkan,
-// sehingga model yang menggantung/error tidak menahan jawaban.
-async function chatEnsemble(messages) {
+// Jalankan model AI secara paralel lalu gabungkan hasilnya (ensemble)
+// agar lebih akurat. Bila user memilih satu model, hanya model itu yang
+// dipanggil (respons jauh lebih cepat). Bila "semua", jalankan ensemble yang
+// tidak menunggu semua model selesai: begitu minimal 2 berhasil (atau
+// batas waktu singkat tercapai), langsung digabungkan.
+async function chatEnsemble(messages, selected) {
   if (isGitHubPages) await ensureBackend();
 
   const lastUser = (messages.slice().reverse().find(function (m) { return m.role === 'user'; }) || {}).content || '';
+  // Model yang akan dipanggil: satu model bila user memilih tertentu,
+  // atau seluruh daftar FREE_MODELS untuk mode ensemble ("semua").
+  let modelIds = FREE_MODELS;
+  const singlePick = selected && selected !== 'semua' ? selected : null;
+  if (singlePick) {
+    // Mode satu model: coba model pilihan dulu. Bila gagal, turun ke
+    // ensemble FREE_MODELS sebagai cadangan agar user tetap mendapat jawaban.
+
+
+    const singleData = await chatOnce(singlePick, messages).catch(function () { return null; });
+    if (singleData) {
+      const singleContent = extractContent(singleData.data);
+      if (singleContent) {
+        return {
+          choices: [{ message: { content: singleContent } }],
+          usage: { total_tokens: (parseUsage(singleData.data) || {}).tokens || 0 },
+          cost: '0',
+          agents: [singlePick]
+        };
+      }
+    }
+    // Model pilihan gagal — lanjut ke ensemble penuh sebagai cadangan.
+
+
+    modelIds = FREE_MODELS;
+  }
   const minGood = 2;          // minimal jawaban sukses sebelum lanjut
   const maxWaitMs = 6000;     // batas menunggu tambahan untuk model yang lambat
   const good = [];
   const agents = [];
   let totalTokens = 0;
   let settled = 0;
-  const total = FREE_MODELS.length;
+  const total = modelIds.length;
 
   function collect(result) {
     settled++;
@@ -305,7 +334,7 @@ async function chatEnsemble(messages) {
     return good.length >= minGood || settled >= total || good.length === 1 && settled >= total;
   }
 
-  const pending = FREE_MODELS.map(function (id) {
+  const pending = modelIds.map(function (id) {
     return chatOnce(id, messages).then(
       function (v) { collect({ status: 'fulfilled', value: v }); },
       function (e) { collect({ status: 'rejected', reason: e }); }
@@ -434,8 +463,9 @@ async function chatEnsemble(messages) {
     const typing = typingIndicator();
 
     try {
-      setStatus('on', 'memproses dengan 4 model…');
-      const data = await chatEnsemble(buildThreadHistory());
+      const selected = model.value;
+      setStatus('on', selected && selected !== 'semua' ? 'memproses dengan 1 model…' : 'memproses dengan 4 model…');
+      const data = await chatEnsemble(buildThreadHistory(), model.value);
       typing.remove();
       const content = extractContent(data) || '(respons kosong)';
       const usage = parseUsage(data);
@@ -541,10 +571,10 @@ async function chatEnsemble(messages) {
         // Verified-working free models (OpenCode, no account needed).
         // Zen (opencode.ai/zen/v1) melaporkan id model tanpa prefiks "oc/".
         const candidates = [
+          'ling-3.0-flash-fin-free',
+          'nemotron-3-ultra-free',
           'mimo-v2.5-free',
-          'hy3-free',
-          'laguna-s-2.1-free',
-          'nemotron-3.5-lightning-free'
+          'laguna-s-2.1-free'
         ];
         // Only show models that are actually ready to use.
         candidates.forEach(function (id) {
