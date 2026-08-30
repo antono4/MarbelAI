@@ -49,14 +49,13 @@
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // Optimasi decorateText agar tidak berat saat streaming
   function decorateText(text) {
     const blockRe = /```([\s\S]*?)```/g;
     const parts = [];
     let last = 0, m;
     while ((m = blockRe.exec(text)) !== null) {
       const before = text.slice(last, m.index);
-      // Preserve the original fence body verbatim so a first line that is a
-      // plain word is never mistaken for a language tag.
       const blockHtml = '<div class="code-block"><pre>' + esc(m[1]) + '</pre></div>';
       parts.push(before, { html: blockHtml });
       last = m.index + m[0].length;
@@ -82,10 +81,10 @@
     return el;
   }
 
-  function addAssistantMessage(content, opts) {
-    opts = opts || {};
+  // Pesan AI yang siap untuk streaming
+  function createAssistantMessage() {
     const wrap = document.createElement('div');
-    wrap.className = 'msg assistant' + (opts.err ? ' err' : '');
+    wrap.className = 'msg assistant';
     const tag = document.createElement('div');
     tag.className = 'role-tag';
     tag.innerHTML = '<span class="agent-dot">&#10022;</span><span>Marbel AI</span>';
@@ -93,23 +92,12 @@
     body.className = 'body';
     const inner = document.createElement('div');
     inner.className = 'inner';
-    inner.innerHTML = decorateText(content);
     body.appendChild(inner);
-    if (opts.tokens) {
-      const t = document.createElement('span');
-      t.className = 'token';
-      let label = '⚡ ' + opts.tokens + ' token · ' + (opts.cost === '0' ? 'Rp 0 / free' : '$' + opts.cost);
-      if (opts.agents && opts.agents.length) {
-        label += ' · agent: ' + opts.agents.join(' + ');
-      }
-      t.textContent = label;
-      body.appendChild(t);
-    }
     wrap.appendChild(tag);
     wrap.appendChild(body);
     messagesEl.appendChild(wrap);
     scrollDown();
-    return wrap;
+    return { wrap: wrap, inner: inner, body: body };
   }
 
   function typingIndicator() {
@@ -128,262 +116,99 @@
     return wrap;
   }
 
+  let scrollTimeout;
   function scrollDown() {
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    // Throttle scroll untuk mencegah lag saat streaming
+    if (scrollTimeout) return;
+    scrollTimeout = setTimeout(function() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      scrollTimeout = null;
+    }, 50);
   }
 
   function showChat() {
     welcomeEl.style.display = 'none';
   }
 
-  function extractContent(data) {
-    if (!data) return '';
-    if (data.error && data.error.message) throw new Error(data.error.message);
-    if (data.choices && data.choices[0]) {
-      const c = data.choices[0].message || {};
-      return c.content || c.reasoning_content || '';
+  // Konfigurasi Backend
+  const DEFAULT_BACKEND = 'https://marbel-ai.onrender.com';
+  const FALLBACK_BACKEND = 'https://marbel-ai.onrender.com';
+  const override = new URLSearchParams(window.location.search).get('backend');
+  let backendInUse = override || DEFAULT_BACKEND;
+  const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
+
+  const FREE_MODELS = ['ling-3.0-flash-fin-free', 'nemotron-3-ultra-free', 'mimo-v2.5-free', 'laguna-s-2.1-free'];
+
+  function apiBase() {
+    if (!isGitHubPages) return '';
+    return backendInUse;
+  }
+  const api = function (path) { return apiBase() + path; };
+
+  async function ensureBackend() {
+    if (backendInUse !== FALLBACK_BACKEND) {
+      try {
+        const res = await fetch(backendInUse + '/api/models', { method: 'GET', headers: { accept: 'application/json' } });
+        if (res.ok) return;
+      } catch (e) {}
+      backendInUse = FALLBACK_BACKEND;
     }
-    return '';
   }
 
-  function parseUsage(data) {
-    if (data && data.usage) {
-      const t = data.usage.total_tokens || data.usage.completion_tokens || 0;
-      return { tokens: t, cost: data.cost || '0', agents: data.agents || null };
-    }
-    return null;
-  }
-
-  // Determine the API base. When this UI is served statically on GitHub Pages
-// (no backend), fall back to a live Marbel AI backend host hosting server.js.
-// Otherwise use the same-origin /api proxy provided by server.js.
-//
-// Override the backend with ?backend=https://your-host (e.g. your deployed
-// server.js on Render/Railway): https://<user>.github.io/MarbelAI/?backend=...
-// Backend permanen (Render, menjalankan server.js → upstream OpenAI-compatible)
-// Jika belum atau sempat tidak merespons, otomatis beralih ke host cadangan yang hidup.
-const DEFAULT_BACKEND = 'https://marbel-ai.onrender.com';
-const  FALLBACK_BACKEND  = 'https://marbel-ai.onrender.com';
-const override = new URLSearchParams(window.location.search).get('backend');
-let backendInUse = override || DEFAULT_BACKEND;
-const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
-// Free models (OpenCode/Zen, no account) — order is the fallback priority.
-// Only models that the Zen upstream currently serves are listed: ling & nemotron-3
-// are fast and stable; mimo is popular (occasionally rate-limited); laguna is slower
-// but still works. hy3-free and nemotron-3.5-lightning-free are removed (unsupported/slow)。
-const FREE_MODELS = ['ling-3.0-flash-fin-free', 'nemotron-3-ultra-free', 'mimo-v2.5-free', 'laguna-s-2.1-free'];
-
-function apiBase() {
-  if (!isGitHubPages) return '';
-  return backendInUse;
-}
-const api = function (path) { return apiBase() + path; };
-
-function pickFallback() {
-  if (backendInUse === FALLBACK_BACKEND) return;
-  backendInUse = FALLBACK_BACKEND;
-}
-
-async function ensureBackend() {
-  if (backendInUse !== FALLBACK_BACKEND) {
-    try {
-      const res = await fetch(backendInUse + '/api/models', { method: 'GET', headers: { accept: 'application/json' } });
-      if (res.ok) return;
-    } catch (e) {}
-    pickFallback();
-  }
-}
-
-function sleep(ms) {
-  return new Promise(function (resolve) { setTimeout(resolve, ms); });
-}
-
-function isRetryable(status, message) {
-  if (status === 429 || status === 502 || status === 503 || status === 504) return true;
-  return /rate limit|too many requests|busy|overloaded|try again later|upstream request failed|endpoint is unavailable|temporarily unavailable|timeout/i.test(message || '');
-}
-
-function isTransientError(err) {
-  return err instanceof TypeError || /fetch|network|failed|econnreset|socket/i.test(err.message || '');
-}
-
-// Kirim satu permintaan ke satu model, dengan retry singkat untuk error transien
-// dan batas waktu per permintaan agar satu model yang menggantung tidak
-// menahan seluruh ensemble.
-async function chatOnce(modelId, messages) {
-  const maxAttempts = 2;
-  const timeoutMs = 15000;
-  let lastError;
-
-  function fetchWithTimeout() {
+  // === FITUR STREAMING BARU ===
+  // Memunculkan jawaban AI kata demi kata agar tidak terasa lambat
+  async function streamChat(modelId, messages, onChunk) {
+    const timeoutMs = 45000; // Batas waktu 45 detik
     const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     let timer = null;
-    if (ctrl) {
-      timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
-    }
-    return fetch(api('/api/chat'), {
+    if (ctrl) timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+
+    const res = await fetch(api('/api/chat'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: modelId, messages, stream: false }),
+      body: JSON.stringify({ model: modelId, messages, stream: true }), // Streaming diaktifkan
       signal: ctrl ? ctrl.signal : undefined
-    }).finally(function () { if (timer) clearTimeout(timer); });
-  }
+    });
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    let res;
-    try {
-      res = await fetchWithTimeout();
-    } catch (e) {
-      // Timeout/abort tidak diulang: model yang lambat dibiarkan gagal cepat,
-      // ensemble tetap berjalan dengan model lain.
-      if (attempt < maxAttempts && isTransientError(e) && !/abort|timeout/i.test(e.message || '')) {
-        lastError = e;
-        await sleep(1000 * attempt);
-        continue;
-      }
-      throw e;
+    if (timer) clearTimeout(timer);
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
     }
 
-    const text = await res.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch (e) { data = null; }
-    const status = res.status;
-    const message = (data && data.error && data.error.message) ||
-      (data ? '' : 'Respons dari server bukan format JSON (HTTP ' + status + '). ' + text.trim().slice(0, 120));
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
 
-    if (res.ok && data) return { modelId: modelId, data: data };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    const err = new Error(message || ('HTTP ' + status));
-    lastError = err;
-    if (attempt < maxAttempts && isRetryable(status, message)) {
-      await sleep(1000 * attempt);
-      continue;
-    }
-    throw err;
-  }
-  throw lastError;
-}
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // simpan baris yang belum selesai
 
-function ensemblePrompt(question, answers) {
-  const blocks = answers.map(function (a, i) {
-    return 'Jawaban ' + (i + 1) + ' (model: ' + a.modelId + '):\n' + a.content;
-  }).join('\n\n');
-  return 'Pertanyaan pengguna:\n' + question + '\n\n' +
-    'Berikut adalah beberapa jawaban dari model yang berbeda:\n\n' + blocks + '\n\n' +
-    'Gabungkan jawaban-jawaban di atas menjadi satu jawaban terbaik yang paling akurat, ' +
-    'lengkap, dan jelas. Pilih fakta yang paling tepat, buang yang keliru atau berulang, ' +
-    'dan jawab dalam bahasa Indonesia. Jangan gunakan tabel Markdown, karakter "|", "---", atau "*".';
-}
-// Jalankan model AI secara paralel lalu gabungkan hasilnya (ensemble)
-// agar lebih akurat. Bila user memilih satu model, hanya model itu yang
-// dipanggil (respons jauh lebih cepat). Bila "semua", jalankan ensemble yang
-// tidak menunggu semua model selesai: begitu minimal 2 berhasil (atau
-// batas waktu singkat tercapai), langsung digabungkan.
-async function chatEnsemble(messages, selected) {
-  if (isGitHubPages) await ensureBackend();
-
-  const lastUser = (messages.slice().reverse().find(function (m) { return m.role === 'user'; }) || {}).content || '';
-  // Model yang akan dipanggil: satu model bila user memilih tertentu,
-  // atau seluruh daftar FREE_MODELS untuk mode ensemble ("semua").
-  let modelIds = FREE_MODELS;
-  const singlePick = selected && selected !== 'semua' ? selected : null;
-  if (singlePick) {
-    // Mode satu model: coba model pilihan dulu. Bila gagal, turun ke
-    // ensemble FREE_MODELS sebagai cadangan agar user tetap mendapat jawaban.
-
-
-    const singleData = await chatOnce(singlePick, messages).catch(function () { return null; });
-    if (singleData) {
-      const singleContent = extractContent(singleData.data);
-      if (singleContent) {
-        return {
-          choices: [{ message: { content: singleContent } }],
-          usage: { total_tokens: (parseUsage(singleData.data) || {}).tokens || 0 },
-          cost: '0',
-          agents: [singlePick]
-        };
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') return fullText;
+        
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices[0]?.delta?.content || '';
+          if (delta) {
+            fullText += delta;
+            onChunk(fullText); // Kirim teks sementara ke UI
+          }
+        } catch (e) { /* Abaikan JSON parsial */ }
       }
     }
-    // Model pilihan gagal — lanjut ke ensemble penuh sebagai cadangan.
-
-
-    modelIds = FREE_MODELS;
+    return fullText;
   }
-  const minGood = 2;          // minimal jawaban sukses sebelum lanjut
-  const maxWaitMs = 6000;     // batas menunggu tambahan untuk model yang lambat
-  const good = [];
-  const agents = [];
-  let totalTokens = 0;
-  let settled = 0;
-  const total = modelIds.length;
-
-  function collect(result) {
-    settled++;
-    if (result.status === 'fulfilled') {
-      const content = extractContent(result.value.data);
-      if (content) {
-        good.push({ modelId: result.value.modelId, content: content });
-        agents.push(result.value.modelId);
-        const u = parseUsage(result.value.data);
-        if (u) totalTokens += u.tokens;
-      }
-    }
-  }
-
-  function shouldResolve() {
-    return good.length >= minGood || settled >= total || good.length === 1 && settled >= total;
-  }
-
-  const pending = modelIds.map(function (id) {
-    return chatOnce(id, messages).then(
-      function (v) { collect({ status: 'fulfilled', value: v }); },
-      function (e) { collect({ status: 'rejected', reason: e }); }
-    );
-  });
-
-  // Tunggu minimal minGood jawaban sukses, atau semua selesai, atau batas waktu.
-  await Promise.race([
-    Promise.all(pending),
-    new Promise(function (resolve) {
-      const iv = setInterval(function () {
-        if (shouldResolve()) { clearInterval(iv); resolve(); }
-      }, 100);
-      setTimeout(function () { clearInterval(iv); resolve(); }, maxWaitMs);
-    })
-  ]);
-
-  if (good.length === 0) {
-    throw new Error('Semua model gagal merespons. Silakan coba lagi beberapa saat.');
-  }
-
-  let finalContent;
-  if (good.length === 1) {
-    finalContent = good[0].content;
-  } else {
-    // Gunakan model pertama yang berhasil sebagai "perangkum" jawaban ensemble.
-    const aggregator = good[0].modelId;
-    const aggMessages = [
-      { role: 'system', content: 'Kamu adalah Marbel AI. Jawab dengan bahasa Indonesia, ringkas dan jelas.' },
-      { role: 'user', content: ensemblePrompt(lastUser, good) }
-    ];
-    try {
-      setStatus('on', 'menggabungkan ' + good.length + ' jawaban model…');
-      const agg = await chatOnce(aggregator, aggMessages);
-      finalContent = extractContent(agg.data);
-      const u = parseUsage(agg.data);
-      if (u) totalTokens += u.tokens;
-    } catch (e) {
-      finalContent = good[0].content;
-    }
-  }
-
-  return {
-    choices: [{ message: { content: finalContent } }],
-    usage: { total_tokens: totalTokens },
-    cost: '0',
-    agents: agents
-  };
-}
 
   function buildThreadHistory() {
     const msgs = history.flatMap(function (h) {
@@ -391,7 +216,6 @@ async function chatEnsemble(messages, selected) {
         return { role: i.role, content: i.content };
       });
     });
-    // Identity system prompt: the assistant always presents itself as Marbel AI.
     msgs.unshift({
       role: 'system',
       content: 'Kamu adalah Marbel AI. Saat ditanya siapa kamu, jawab sebagai Marbel AI. Jawab dengan bahasa Indonesia. Jangan gunakan tabel Markdown, jangan gunakan karakter "|", "---", atau "*". Balas ringkas, jelas, dan tanpa hiasan berlebihan.'
@@ -432,7 +256,10 @@ async function chatEnsemble(messages, selected) {
     activeBadge.classList.remove('show');
     th.items.forEach(function (i) {
       if (i.role === 'user') addUserMessage(i.content);
-      else addAssistantMessage(i.content);
+      else {
+        const msgEl = createAssistantMessage();
+        msgEl.inner.innerHTML = decorateText(i.content);
+      }
     });
     updateThreadList();
   }
@@ -461,25 +288,47 @@ async function chatEnsemble(messages, selected) {
     addUserMessage(text);
 
     const typing = typingIndicator();
-
+    const selected = model.value;
+    
     try {
-      const selected = model.value;
-      setStatus('on', selected && selected !== 'semua' ? 'memproses dengan 1 model…' : 'memproses dengan 4 model…');
-      const data = await chatEnsemble(buildThreadHistory(), model.value);
+      // Hapus indikator typing, buat bubble chat kosong untuk diisi stream
       typing.remove();
-      const content = extractContent(data) || '(respons kosong)';
-      const usage = parseUsage(data);
-      current.items.push({ role: 'assistant', content: content });
-      if (usage) addAssistantMessage(content, usage);
-      else addAssistantMessage(content);
+      const msgEls = createAssistantMessage();
+      
+      let fullText = '';
+      let lastRender = 0;
+      
+      // Fungsi untuk merender teks ke layar (di-throttle agar tidak lag)
+      const renderChunk = (text) => {
+        fullText = text;
+        const now = Date.now();
+        if (now - lastRender > 50) { // Update maksimal 20x per detik
+          lastRender = now;
+          msgEls.inner.innerHTML = decorateText(fullText);
+          scrollDown();
+        }
+      };
+
+      // Logika pemilihan model (Dipangkas agar lebih cepat)
+      let modelToUse = selected && selected !== 'semua' ? selected : FREE_MODELS[0];
+      
+      setStatus('on', 'menulis...');
+      await streamChat(modelToUse, buildThreadHistory(), renderChunk);
+      
+      // Render final setelah selesai
+      msgEls.inner.innerHTML = decorateText(fullText);
+      
+      current.items.push({ role: 'assistant', content: fullText });
       setStatus('on', 'terhubung');
     } catch (err) {
       typing.remove();
-      const friendly = isRetryable(0, err.message)
-        ? 'Server AI sedang sibuk atau mengalami gangguan sementara.\nPermintaan sudah dicoba ulang otomatis dengan beberapa model.\nMohon tunggu beberapa saat lalu kirim ulang pesan Anda.'
-        : 'Terjadi kesalahan:\n' + err.message;
+      const friendly = 'Terjadi kesalahan saat menghubungi server.\nDetail: ' + err.message;
       current.items.push({ role: 'assistant', content: friendly });
-      addAssistantMessage(friendly, { err: true });
+      
+      const errEl = createAssistantMessage();
+      errEl.wrap.classList.add('err');
+      errEl.inner.innerHTML = decorateText(friendly);
+      
       setStatus('err', 'gagal');
     } finally {
       busy = false;
@@ -523,7 +372,7 @@ async function chatEnsemble(messages, selected) {
       pill.type = 'button';
       pill.className = 'mname' + (active ? ' active' : ' locked');
       pill.textContent = id;
-      pill.title = active ? 'Siap dipakai gratis' : 'Provider belum terhubung — klik untuk tetap memilih';
+      pill.title = active ? 'Siap dipakai gratis' : 'Provider belum terhubung';
       pill.dataset.active = active ? '1' : '0';
       pill.addEventListener('click', function () { setModel(id); });
       modelListEl.appendChild(pill);
@@ -533,12 +382,10 @@ async function chatEnsemble(messages, selected) {
 
   function setModel(id) {
     model.value = id;
-    // jump to the dropdown so it's visible
     model.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function populateModelSelect(allIds, usableIds) {
-    // merge: put usable ones first (deduped), then the rest
     const seen = {};
     const merged = [];
     usableIds.concat(allIds).forEach(function (id) {
@@ -547,7 +394,7 @@ async function chatEnsemble(messages, selected) {
     model.innerHTML = '';
     const semua = document.createElement('option');
     semua.value = 'semua';
-    semua.textContent = 'Semua Model (' + merged.length + ' — gabungan)';
+    semua.textContent = 'Auto Model (Tercepat)';
     model.appendChild(semua);
     merged.forEach(function (id) {
       const opt = document.createElement('option');
@@ -555,28 +402,17 @@ async function chatEnsemble(messages, selected) {
       opt.textContent = id;
       model.appendChild(opt);
     });
-    // keep a sensible default
     model.value = 'semua';
   }
 
   function loadModels() {
     Promise.resolve(isGitHubPages ? ensureBackend() : null)
-      .then(function () {
-        return fetch(api('/api/models'));
-      })
+      .then(function () { return fetch(api('/api/models')); })
       .then(function (r) { return r.json(); })
       .catch(function () { return { data: [] }; })
       .then(function (data) {
         let all = (data.data || []).map(function (m) { return m.id; });
-        // Verified-working free models (OpenCode, no account needed).
-        // Zen (opencode.ai/zen/v1) melaporkan id model tanpa prefiks "oc/".
-        const candidates = [
-          'ling-3.0-flash-fin-free',
-          'nemotron-3-ultra-free',
-          'mimo-v2.5-free',
-          'laguna-s-2.1-free'
-        ];
-        // Only show models that are actually ready to use.
+        const candidates = FREE_MODELS;
         candidates.forEach(function (id) {
           if (all.indexOf(id) === -1) all.push(id);
         });
