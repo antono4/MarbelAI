@@ -157,55 +157,36 @@
 
   // === FITUR STREAMING BARU ===
   // Memunculkan jawaban AI kata demi kata agar tidak terasa lambat
+  
+  // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
+  // Mode Non-Streaming (Cadangan jika server tidak support stream)
   async function streamChat(modelId, messages, onChunk) {
-    const timeoutMs = 45000; // Batas waktu 45 detik
-    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    let timer = null;
-    if (ctrl) timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
-
+    setStatus('on', 'menunggu jawaban...');
     const res = await fetch(api('/api/chat'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: modelId, messages, stream: true }), // Streaming diaktifkan
-      signal: ctrl ? ctrl.signal : undefined
+      body: JSON.stringify({ model: modelId, messages, stream: false })
     });
-
-    if (timer) clearTimeout(timer);
 
     if (!res.ok) {
       const errText = await res.text();
       throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    const data = await res.json();
     let fullText = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    if (data.choices && data.choices[0]) {
+      const c = data.choices[0].message || {};
+      fullText = c.content || c.reasoning_content || '';
+    }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop(); // simpan baris yang belum selesai
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') return fullText;
-        
-        try {
-          const json = JSON.parse(data);
-          const delta = json.choices[0]?.delta?.content || '';
-          if (delta) {
-            fullText += delta;
-            onChunk(fullText); // Kirim teks sementara ke UI
-          }
-        } catch (e) { /* Abaikan JSON parsial */ }
-      }
+    // Simulasikan mengetik agar terasa cepat dan responsif
+    const words = fullText.split(' ');
+    for (let i = 0; i < words.length; i++) {
+      fullText = words.slice(0, i + 1).join(' ');
+      onChunk(fullText);
+      await new Promise(r => setTimeout(r, 20)); // jeda 20ms
     }
     return fullText;
   }
