@@ -346,45 +346,6 @@
     }
   }
       
-      // Fungsi untuk merender teks ke layar (di-throttle agar tidak lag)
-      const renderChunk = (text) => {
-        fullText = text;
-        const now = Date.now();
-        if (now - lastRender > 50) { // Update maksimal 20x per detik
-          lastRender = now;
-          msgEls.inner.innerHTML = decorateText(fullText);
-          scrollDown();
-        }
-      };
-
-      // Logika pemilihan model (Dipangkas agar lebih cepat)
-      let modelToUse = selected && selected !== 'semua' ? selected : FREE_MODELS[0];
-      
-      setStatus('on', 'menulis...');
-      await streamChat(modelToUse, buildThreadHistory(), renderChunk);
-      
-      // Render final setelah selesai
-      msgEls.inner.innerHTML = decorateText(fullText);
-      
-      current.items.push({ role: 'assistant', content: fullText });
-      setStatus('on', 'terhubung');
-    } catch (err) {
-      typing.remove();
-      const friendly = 'Terjadi kesalahan saat menghubungi server.\nDetail: ' + err.message;
-      current.items.push({ role: 'assistant', content: friendly });
-      
-      const errEl = createAssistantMessage();
-      errEl.wrap.classList.add('err');
-      errEl.inner.innerHTML = decorateText(friendly);
-      
-      setStatus('err', 'gagal');
-    } finally {
-      busy = false;
-      sendBtn.disabled = false;
-      activeBadge.classList.remove('show');
-      updateThreadList();
-    }
-  }
 
   form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
   input.addEventListener('input', resize);
