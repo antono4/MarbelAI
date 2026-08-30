@@ -59,3 +59,4 @@ GitHub Pages hanya menyajikan file statis, jadi untuk chat berjalan perlu **back
 
 > ⚠️ Penting: upstream (seperti Zen `https://opencode.ai/zen`) harus bisa dijangkau dari backend publik Anda. CORS sudah diterapkan di `server.js` agar request lintas-origin dari GitHub Pages diterima.
 
+Last updated: 2026-08-30 19:47:16 WIB
