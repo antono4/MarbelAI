@@ -162,23 +162,43 @@
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
   async function streamChat(modelId, messages, onChunk) {
     setStatus('on', 'menunggu jawaban...');
-    const res = await fetch(api('/api/chat'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: modelId, messages, stream: false })
-    });
+
+    // Batasi lama menunggu upstream agar model yang menggantung tidak
+    // memblok model lain (pakai AbortController + timeout 30 detik)
+    const controller = new AbortController();
+    const timer = setTimeout(function () { controller.abort(); },30000);
+    let res;
+    try {
+      res = await fetch(api('/api/chat'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: modelId, messages, stream: false }),
+        signal: controller.signal
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
+      throw new Error(why || 'fetch failed');
+    }
+    clearTimeout(timer);
 
     if (!res.ok) {
-      const errText = await res.text();
+      const errText = await res.text().catch(function () { return ''; });
       throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
     }
 
-    const data = await res.json();
-    let fullText = '';
+    const data = await res.json().catch(function () { return null; });
+    // Upstream Zen kerap membalas HTTP  200 dengan badan error; anggap sebagai
+    // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
 
-    if (data.choices && data.choices[0]) {
-      const c = data.choices[0].message || {};
-      fullText = c.content || c.reasoning_content || '';
+    if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
+      const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
+      throw new Error('upstream error: ' + em);
+    }
+    const c = data.choices[0].message || {};
+    let fullText = c.content || c.reasoning_content || '';
+    if (!fullText || !fullText.trim()) {
+      throw new Error('upstream error: respons kosong');
     }
 
     // Simulasikan mengetik agar terasa cepat dan responsif
@@ -301,13 +321,20 @@
       let success = false;
       let lastError = null;
 
-      // Upstream gratis sering 503 sesaat; coba ulang penuh dengan backoff agar
-      // user tetap dapat jawaban begitu provider pulih (maks 3x percobaan),
-      const MAX_ATTEMPTS = 3;
-      for (let attempt = 0; attempt < MAX_ATTEMPTS && !success; attempt++) {
+      // Upstream gratis sering 503/error sesaat; coba ulang penuh dengan backoff agar
+      // user tetap dapat jawaban begitu provider pulih.
+      const MAX_ATTEMPTS = 4;
+      const delayMs = (function () {
+        let base = 800;
+        return function (attempt) {
+          const jitter = Math.floor(Math.random() * 400);
+          return base * Math.pow(2, attempt) + jitter; // ~1.2s,, 2s,, 3.6s,, 6.8s
+        };
+      })();
+      for (let attempt =  0; attempt < MAX_ATTEMPTS && !success; attempt++) {
         if (attempt > 0) {
           setStatus('on', 'server sibuk, mencoba lagi… (' + attempt + '/' + (MAX_ATTEMPTS - 1) + ')');
-          await new Promise(r => setTimeout(r, attempt * 1500)); // 1.5s,, 3s
+          await new Promise(r => setTimeout(r, delayMs(attempt)));
         }
         for (let i =0; i < modelsToTry.length; i++) {
           let modelToUse = modelsToTry[i];
@@ -319,12 +346,20 @@
           } catch (err) {
             console.warn('Model ' + modelToUse + ' gagal:', err.message);
             lastError = err;
-            // Selalu lanjut ke model cadangan untuk error HTTP 4xx/5xx
-            // atau error upstream (timeout/proxy), agar user tetap dapat jawaban.
-
-            if (!/4\d{2}|5\d{2}|upstream/i.test(err.message)) {
+            // Lanjut ke model cadangan untuk semua error HTTP 4xx/5xx,
+            // error upstream (badan error 200, timeout, proxy), agar
+            // user tetap dapat jawaban.
+            if (!/4\d{2}|5\d{2}|upstream|timeout|fetch failed/i.test(err.message)) {
               throw err;
             }
+          }
+        }
+        if (!success) {
+          // Semua model gagal di gelombang ini; beri jeda lebih lama agar
+          // upstream punya waktu pulih sebelum gelombang berikutnya.
+          if (attempt < MAX_ATTEMPTS - 1) {
+            setStatus('on', 'semua model sibuk, menunggu lalu mencoba lagi…');
+            await new Promise(r => setTimeout(r, 2500));
           }
         }
       }
