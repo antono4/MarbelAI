@@ -20,9 +20,15 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - `nemotron-3.5-lightning-free` — sangat lambat (>9s).
 - `deepseek-v4-flash-free`, `muse-spark-1.2-contributor-free` — error dari provider.
 
+## Model Z.ai (GLM)
+
+- Model Z.ai `glm-4.7-flash` dan `glm-4.5-flash` **gratis (nol rupiah)** di API resmi Z.ai (openai.dev? use https://api.z.ai/api/paas/v4).
+- Ditambahkan ke `FREE_MODELS` dan dropdown. Pada deploy Render,, isi env `ZAI_API_KEY` agar model GLM benar-benar melayani; tanpa key, model GLM dicoba lalu gagal cepat () dan fallback ke model Zen gratis ( sudah ditangani logika retry/failover ).
+- Server kini punya upstream cadangan: `ZAI_UPSTREAM` (default https://api.z.ai/api/paas/v4) dipakai otomatis bila upstream utama (Zen) gagal/401/5xx dan `ZAI_API_KEY` tersedia. Endpoint URL dibangun otomatis (Zen pakai prefix `/v1`, Z.ai pakai `/chat/completions` di bawah `/api/`).
+
 ## Pola ensemble
 
-- Mode "Semua Model": jalankan 4 model parallel; langsung resolve setelah 2 sukses (biasanya ling + nemotron-3-ultra dalam ~1-2s., lalu agregator gabungkan jawaban.
+- Mode "Semua Model": jalankan 6 model (termasuk Z.ai GLM bila ada key); langsung resolve setelah 2 sukses (biasanya ling + nemotron-3-ultra dalam ~1-2s., lalu agregator gabungkan jawaban.
 
 
 

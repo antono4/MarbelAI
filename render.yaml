@@ -17,6 +17,12 @@ services:
         value: https://opencode.ai/zen
       - key: API_KEY
         sync: false
+      # Z.ai (GLM): upstream cadangan opsional untuk model Z.ai — isi ZAI_API_KEY
+      # di dashboard Render bila ingin model GLM ikut melayani.
+      - key: ZAI_UPSTREAM
+        value: https://api.z.ai/api/paas/v4
+      - key: ZAI_API_KEY
+        sync: false
       - key: ALLOW_ORIGIN
         value: "*"
       - key: USE_SSE
