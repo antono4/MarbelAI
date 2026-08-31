@@ -14,6 +14,53 @@ const USE_SSE = String(process.env.USE_SSE || '1');
 // this backend's /api/chat. Restrict with a specific origin for production if desired.
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
 
+// Upstream cadangan: Z.ai (GLM) — https://api.z.ai/api/paas/v4 (OpenAI-compatible).
+// Dipakai hanya bila ZAI_API_KEY diisi; bila upstream utama gagal/401/5xx,
+// request dicoba ulang ke Z.ai agar model GLM bisa melayani.
+
+
+
+const ZAI_UPSTREAM = process.env.ZAI_UPSTREAM || 'https://api.z.ai/api/paas/v4';
+const ZAI_API_KEY = process.env.ZAI_API_KEY || '';
+
+// Zen memakai prefix /v1 di dasar URL; Z.ai memakai v4 langsung di jalur /api/.
+function upstreamChatUrl(base) {
+  if (base.endsWith('/v1/chat/completions') || base.endsWith('/chat/completions')) return base;
+  if (base.endsWith('/v1')) return base + '/chat/completions';
+  if (base.indexOf('/api/') !== -1) return base + '/chat/completions';
+  return base + '/v1/chat/completions';
+}
+function upstreamModelsUrl(base) {
+  if (base.endsWith('/v1/models') || base.endsWith('/models')) return base;
+  if (base.endsWith('/v1')) return base + '/models';
+  if (base.indexOf('/api/') !== -1) return base + '/models';
+  return base + '/v1/models';
+}
+
+// Panggil satu upstream OpenAI-compatible dan kumpulkan seluruh body-nya.
+
+function callUpstream(baseUrl, apiKey, payload, accept, timeoutMs, kind) {
+  return new Promise(function (resolve, reject) {
+    const transport = baseUrl.startsWith('https://') ? https : http;
+    const headers = { 'content-type': 'application/json', 'accept': accept };
+    if (apiKey) headers.authorization = 'Bearer ' + apiKey;
+    const url = (kind === 'models') ? upstreamModelsUrl(baseUrl) : upstreamChatUrl(baseUrl);
+    const req = transport.request(url, { method: (kind === 'models') ? 'GET' : 'POST', headers }, function (upRes) {
+      const chunks = [];
+      upRes.on('data', function (c) { chunks.push(c); });
+      upRes.on('end', function () {
+        resolve({ status: upRes.statusCode || ((kind === 'models') ? 200 : 502), headers: upRes.headers || {}, body: Buffer.concat(chunks) });
+      });
+    });
+    req.on('error', reject);
+    const timer = setTimeout(function () {
+      req.destroy(new Error('upstream timeout'));
+    }, timeoutMs);
+    req.on('close', function () { clearTimeout(timer); });
+    if (kind !== 'models') req.write(JSON.stringify(payload));
+    req.end();
+  });
+}
 const ROOT = __dirname;
 
 const CORS_HEADERS = {
@@ -53,53 +100,54 @@ function serveStatic(res, urlPath) {
 }
 
 function proxyOpenAI(req, res) {
-  return new Promise((resolve, reject) => {
+  return new Promise(function (resolve, reject) {
     const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
+    req.on('data', function (c) { chunks.push(c); });
+    req.on('end', async function () {
       const isStream = USE_SSE === '1';
       const clientAuth = req.headers.authorization || '';
       const authHeader = clientAuth || (API_KEY ? 'Bearer ' + API_KEY : '');
-      const headers = {
-        'content-type': 'application/json',
-        'accept': isStream ? 'text/event-stream' : (req.headers.accept || 'application/json'),
-      };
-      if (authHeader) headers.authorization = authHeader;
+      const accept = isStream ? 'text/event-stream' : (req.headers.accept || 'application/json');
       const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      const upstreamTimeout = setTimeout(() => {
-        upstreamReq.destroy(new Error('upstream timeout'));
-      }, 30000);
-      const upstreamReq = ssl.request(
-        UPSTREAM + '/v1/chat/completions',
-        { method: 'POST', headers },
-        (upRes) => {
-          const target = res;
-          for (const [k, v] of Object.entries(upRes.headers)) {
-            if (['transfer-encoding', 'connection'].includes(k.toLowerCase())) continue;
-            try { target.setHeader(k, v); } catch (_) {}
-          }
-          target.writeHead(upRes.statusCode || 502);
-          upRes.pipe(target);
-          upRes.on('end', () => { clearTimeout(upstreamTimeout); resolve(); });
+
+      function sendResult(upRes) {
+        const target = res;
+        for (const [k, v] of Object.entries(upRes.headers)) {
+          if (['transfer-encoding', 'connection'].indexOf(k.toLowerCase()) !== -1) continue;
+          try { target.setHeader(k, v); } catch (_) {}
         }
-      );
-      upstreamReq.on('error', (e) => {
-        clearTimeout(upstreamTimeout);
-        if (!res.headersSent) {
-          res.writeHead(502, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ error: { message: 'Upstream error: ' + e.message } }));
-        } else {
-          res.end();
+        target.writeHead(upRes.status, { 'content-type': upRes.headers['content-type'] || 'application/json' });
+        target.end(upRes.body);
+      }
+
+      // Coba upstream utama dulu; bila gagal (HTTP  4xx/5xx atau error
+      // jaringan/timeout) dan ZAI_API_KEY tersedia, coba upstream Z.ai (GLM).
+      const tryPrimary = await callUpstream(UPSTREAM, authHeader, payload, accept, 30000, 'chat').then(function (r) {
+        return r;
+      }).catch(function () { return null; });
+      if (tryPrimary && tryPrimary.status >= 200 && tryPrimary.status < 300) {
+        sendResult(tryPrimary); resolve(); return;
+      }
+      if (ZAI_API_KEY) {
+        const tryZai = await callUpstream(ZAI_UPSTREAM, ZAI_API_KEY, payload, accept, 30000, 'chat').then(function (r) {
+          return r;
+        }).catch(function () { return null; });
+        if (tryZai && tryZai.status >= 200 && tryZai.status < 300) {
+          sendResult(tryZai); resolve(); return;
         }
-        resolve();
-      });
-      upstreamReq.write(JSON.stringify(payload));
-      upstreamReq.end();
+      }
+      // Semua upstream gagal — kirimkan hasil upstream utama bila ada.
+
+
+
+      const fallback = tryPrimary || { status: 502, headers: {}, body: Buffer.from(JSON.stringify({ error: { message: 'Upstream error: semua upstream gagal' } })) };
+      res.writeHead(fallback.status, { 'content-type': fallback.headers['content-type'] || 'application/json' });
+      res.end(fallback.body);
+      resolve();
     });
     req.on('error', reject);
   });
 }
-
 const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, 'http://localhost');
   const urlPath = reqUrl.pathname;
@@ -118,21 +166,26 @@ const server = http.createServer(async (req, res) => {
       await proxyOpenAI(req, res);
     } else if (req.method === 'GET' && urlPath === '/api/models') {
       applyCors(res);
-      let modelsReq = null;
-      const modelsTimer = setTimeout(() => {
-        if (modelsReq) modelsReq.destroy(new Error('upstream timeout'));
-        if (!res.headersSent) {
-          res.writeHead(502, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ data: [] }));
+      const mkRes = function (upRes) {
+        res.writeHead(upRes.status, { 'content-type': upRes.headers['content-type'] || 'application/json' });
+        res.end(upRes.body);
+      };
+      callUpstream(UPSTREAM, '', null, 'application/json', 15000, 'models').then(async function (primary) {
+        if (primary && primary.status >= 200 && primary.status < 300) {
+          mkRes(primary); return;
         }
-      }, 15000);
-      modelsReq = ssl.get(UPSTREAM + '/v1/models', { headers: { accept: 'application/json' } }, (upRes) => {
-        clearTimeout(modelsTimer);
-        res.writeHead(upRes.statusCode || 200, { 'content-type': 'application/json' });
-        upRes.pipe(res);
-      });
-      modelsReq.on('error', () => {
-        clearTimeout(modelsTimer);
+        if (ZAI_API_KEY) {
+          const zai = await callUpstream(ZAI_UPSTREAM, ZAI_API_KEY, null, 'application/json', 15000, 'models').catch(function () { return null; });
+          if (zai && zai.status >= 200 && zai.status < 300) {
+            mkRes(zai); return;
+          }
+        }
+        if (primary) {
+          mkRes(primary); return;
+        }
+        res.writeHead(502, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: [] }));
+      }).catch(function () {
         if (!res.headersSent) {
           res.writeHead(502, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ data: [] }));

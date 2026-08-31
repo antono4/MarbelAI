@@ -2,7 +2,7 @@
 
 # Marbel AI
 
-Chat dengan beragam model AI gratis tanpa akun dan tanpa biaya. Mengobrol dengan 4 model AI gratis sekaligus yang saling melengkapi untuk jawaban yang lebih akurat dan cepat.
+Chat dengan beragam model AI gratis tanpa akun dan tanpa biaya. Mengobrol dengan 6 model AI gratis sekaligus yang saling melengkapi untuk jawaban yang lebih akurat dan cepat.
 
 **Link:**
 - [Demo](https://antono4.github.io/MarbelAI/)
@@ -14,7 +14,7 @@ Chat dengan beragam model AI gratis tanpa akun dan tanpa biaya. Mengobrol dengan
 
 ## Fitur
 
-- **Multi-model ensemble** - menjalankan 4 model gratis sekaligus dan mengambil jawaban tercepat dengan fallback otomatis.
+- **Multi-model ensemble** - menjalankan 6 model gratis sekaligus dan mengambil jawaban tercepat dengan fallback otomatis.
 - **Antarmuka chat modern** - tersedia berbagai tema, sidebar riwayat percakapan, dan dukungan blok kode..
 - **Cepat dan responsif** - mode streaming dengan efek mengetik agar terasa ringan..
 - **Tanpa dependency** - backend murni Node.js built-in tanpa satu pun package npm..
@@ -24,10 +24,12 @@ Chat dengan beragam model AI gratis tanpa akun dan tanpa biaya. Mengobrol dengan
 
 | Model | Status |
 |---|---|
-| `ling-3.0-flash-fin-free` | Cepat dan stabil (prioritas utama) |
+| `ling-3.0-flash-fin-free` | Cepat dan stabil（prioritas utama） |
 | `nemotron-3-ultra-free` | Cepat dan stabil |
 | `mimo-v2.5-free` | Populer, kadang rate-limit |
 | `laguna-s-2.1-free` | Bisa sukses tapi lambat |
+| `glm-4.7-flash` (Z.ai) | Model Z.ai **gratis** di API Z.ai — ikut melayani bila `ZAI_API_KEY` diisi |
+| `glm-4.5-flash` (Z.ai) | Model Z.ai **gratis** di API Z.ai — ikut melayani bila `ZAI_API_KEY` diisi |
 | `hy3-free` | Tidak didukung upstream |
 | `nemotron-3.5-lightning-free` | Sangat lambat |
 | `deepseek-v4-flash-free` dan `muse-spark-1.2-contributor-free` | Error dari provider |
@@ -51,6 +53,8 @@ Buka `http://localhost:12000` di browser. Tanpa variabel `UPSTREAM`, server mema
 | `PORT` | `12000` | Port HTTP server |
 | `UPSTREAM` | `http://localhost:20128` | Base URL endpoint OpenAI-compatible (contoh Zen `https://opencode.ai/zen/v1`) |
 | `API_KEY` | kosong | API key upstream untuk otentikasi `/v1` (boleh kosong bila tidak butuh) |
+| `ZAI_UPSTREAM` | `https://api.z.ai/api/paas/v4` | Upstream cadangan Z.ai (GLM, OpenAI-compatible) — dipakai bila upstream utama gagal/401/5xx |
+| `ZAI_API_KEY` | kosong | API key Z.ai (opsional) — bila diisi, model `glm-4.7-flash` & `glm-4.5-flash` ikut melayani |
 | `ALLOW_ORIGIN` | `*` | Origin yang diizinkan untuk CORS |
 | `USE_SSE` | `1` | Mode streaming (`1` = stream, `0` = JSON biasa) |
 
