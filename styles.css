@@ -534,7 +534,10 @@ body {
 }
 .active-badge.show { display:flex; animation:rise .3s ease both; }
 .active-badge .working { width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 10px var(--accent-dim); animation:pulse 1.4s ease-in-out infinite; }
-.bsp { letter-spacing:3px; color:var(--accent); }
+.bsp { color:var(--accent); }
+.active-badge .bsp span { display:inline-block; width:4px; height:4px; margin:0 1px; border-radius:50%; background:var(--accent); animation:blink 1.2s infinite; }
+.active-badge .bsp span:nth-child(2) { animation-delay:.2s; }
+.active-badge .bsp span:nth-child(3) { animation-delay:.4s; }
 
 /* ================== Composer ================== */
 .composer {
