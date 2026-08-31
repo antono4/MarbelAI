@@ -114,7 +114,3 @@ MarbelAI/
 ## Lisensi
 
 Didistribusikan di bawah [Lisensi MIT](LICENSE. Copyright 2026 [Antono4](https://github.com/antono4..
-
----
-
-Dibuat dengan - AI gratis untuk semua.
