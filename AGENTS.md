@@ -24,7 +24,21 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 
 - Mode "Semua Model": jalankan 4 model parallel; langsung resolve setelah 2 sukses (biasanya ling + nemotron-3-ultra dalam ~1-2s., lalu agregator gabungkan jawaban.
 
-- Mode single model: dropdown `#model` kini terhubung ke `chatEnsemble(messages, selected)`. Bila model pilihan gagal, jatuh ke ensemble cadangan agar user tetap dapat jawaban.
+
+
+- Mode single model: dropdown `#model` kini terhubung ke `chatEnsemble(messages, selected))`. Bila model pilihan gagal, jatuh ke ensemble cadangan agar user tetap dapat jawaban.
+
+
+
+## Retry saat semua model tidak merespon
+
+- `streamChat` kini menganggap HTTP  200 dengan badan error (mis. error provider dari Zen) atau respons kosong sebagai kegagalan — bukan sukses — agar fallback/retry benar-benar berjalan.
+- Ada timeout client 30 detik per model via `AbortController` agar model menggantung tidak memblokir pergantian ke model lain. Error `upstream timeout`/`fetch failed` ikut diproses retry.
+
+
+
+
+- Pencarian model diulang hingga 4 gelombang penuh dengan backoff eksponensial berjitter (~1.2s, 2s, 3.6s, 6.8s) + jeda pendinginan 2.5s tiap gelombang, jadi bila semua model sesak sesaat ( user otomatis mendapat jawaban begitu provider pulih tanpa menekan kirim ulang. Kalau tetap gagal setelah 4 gelombang, barulah UI menampilkan pesan error.
 
 
 ## Catatan penting
