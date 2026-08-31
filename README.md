@@ -2,7 +2,7 @@
 
 # Marbel AI
 
-Chat dengan beragam model AI gratis tanpa akun dan tanpa biaya. Mengobrol dengan 6 model AI gratis sekaligus yang saling melengkapi untuk jawaban yang lebih akurat dan cepat.
+Chat dengan beragam model AI gratis tanpa akun dan tanpa biaya. Mengobrol dengan beragam model AI gratis sekaligus yang saling melengkapi untuk jawaban yang lebih akurat dan cepat.
 
 **Link:**
 - [Demo](https://antono4.github.io/MarbelAI/)
@@ -14,25 +14,25 @@ Chat dengan beragam model AI gratis tanpa akun dan tanpa biaya. Mengobrol dengan
 
 ## Fitur
 
-- **Multi-model ensemble** - menjalankan 6 model gratis sekaligus dan mengambil jawaban tercepat dengan fallback otomatis.
+- **Multi-model ensemble paralel** - menjalankan semua model gratis sekaligus (paralel,) mengambil jawaban tercepat,, dengan fallback otomatis dan retry ber-backoff..
 - **Antarmuka chat modern** - tersedia berbagai tema, sidebar riwayat percakapan, dan dukungan blok kode..
 - **Cepat dan responsif** - mode streaming dengan efek mengetik agar terasa ringan..
 - **Tanpa dependency** - backend murni Node.js built-in tanpa satu pun package npm..
 - **Siap deploy** - konfigurasi untuk Render Blueprint, Railway, Docker, dan GitHub Pages untuk frontend..
 
-## Model Gratis (Upstream Zen dari opencode.ai)
+## Model Gratis(valid per 2026-08)
+
+Model gratis upstream Zen(dari `https://opencode.ai/zen`) — hanya model berakhiran `-free` yang benar-benar gratis; model lain(Gemini,, GPT,, Claude,, dll.) butuh API key.. Roster di bawah adalah model yang dipakai aplikasi,, diurutkan berdasarkan prioritas:
 
 | Model | Status |
 |---|---|
-| `ling-3.0-flash-fin-free` | Cepat dan stabil（prioritas utama） |
-| `nemotron-3-ultra-free` | Cepat dan stabil |
-| `mimo-v2.5-free` | Populer, kadang rate-limit |
+| `ling-3.0-flash-fin-free` | Cepat dan stabil — prioritas utama |
+| `mimo-v2.5-free` | Populer,, sesekali rate-limit |
 | `laguna-s-2.1-free` | Bisa sukses tapi lambat |
-| `glm-4.7-flash` (Z.ai) | Model Z.ai **gratis** di API Z.ai — ikut melayani bila `ZAI_API_KEY` diisi |
-| `glm-4.5-flash` (Z.ai) | Model Z.ai **gratis** di API Z.ai — ikut melayani bila `ZAI_API_KEY` diisi |
-| `hy3-free` | Tidak didukung upstream |
-| `nemotron-3.5-lightning-free` | Sangat lambat |
-| `deepseek-v4-flash-free` dan `muse-spark-1.2-contributor-free` | Error dari provider |
+| `nemotron-3.5-lightning-free` | Sangat lambat(tetap dicoba sebagai cadangan) |
+| `glm-4.7-flash` / `glm-4.5-flash`(Z.ai) | Model Z.ai **gratis** — ikut melayani bila backend punya `ZAI_API_KEY` |
+
+Model yang lama dan sudah tidak dipakai: `hy3-free`(tidak didukung), `nemotron-3-ultra-free`(request menggantung), `deepseek-v4-flash-free` dan `muse-spark-1.2-contributor-free`(error dari provider)。
 
 ## Menjalankan Secara Lokal
 
@@ -57,6 +57,7 @@ Buka `http://localhost:12000` di browser. Tanpa variabel `UPSTREAM`, server mema
 | `ZAI_API_KEY` | kosong | API key Z.ai (opsional) — bila diisi, model `glm-4.7-flash` & `glm-4.5-flash` ikut melayani |
 | `ALLOW_ORIGIN` | `*` | Origin yang diizinkan untuk CORS |
 | `USE_SSE` | `1` | Mode streaming (`1` = stream, `0` = JSON biasa) |
+| `LOG_CHAT` | kosong | Bila `1`, log request chat di konsol backend |
 
 Lihat salinan penuh di `.env.example`.
 
@@ -66,6 +67,7 @@ Lihat salinan penuh di `.env.example`.
 |---|---|---|
 | `/` | `GET` | UI statis (`index.html`) |
 | `/api/models` | `GET` | Daftar model yang tersedia dari upstream (timeout 15 detik) |
+| `/api/status` | `GET` | Info upstream & ketersediaan key Z.ai (dipakai frontend untuk mengunci model GLM) |
 | `/api/chat` | `POST` | Proksi ke `/v1/chat/completions` upstream (timeout 30 detik) |
 
 Contoh permintaan chat:
