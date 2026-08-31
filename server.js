@@ -109,6 +109,9 @@ function proxyOpenAI(req, res) {
       const authHeader = clientAuth || (API_KEY ? 'Bearer ' + API_KEY : '');
       const accept = isStream ? 'text/event-stream' : (req.headers.accept || 'application/json');
       const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (process.env.LOG_CHAT) {
+        console.log('[chat]', new Date().toISOString(), 'model=' + (payload.model || '?'), 'msgs=' + ((payload.messages || []).length));
+      }
 
       function sendResult(upRes) {
         const target = res;
@@ -191,6 +194,14 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ data: [] }));
         }
       });
+    } else if (req.method === 'GET' && urlPath === '/api/status') {
+      applyCors(res);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        zai: { available: !!ZAI_API_KEY },
+        upstream: UPSTREAM,
+        use_sse: USE_SSE === '1'
+      }));
     } else if (req.method === 'GET') {
       serveStatic(res, urlPath === '/' ? '/index.html' : urlPath);
     } else {
