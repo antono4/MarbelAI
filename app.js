@@ -137,7 +137,9 @@
   let backendInUse = override || DEFAULT_BACKEND;
   const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
 
-  const FREE_MODELS = ['ling-3.0-flash-fin-free', 'nemotron-3-ultra-free', 'mimo-v2.5-free', 'laguna-s-2.1-free', 'glm-4.7-flash', 'glm-4.5-flash'];
+  const FREE_MODELS = ['ling-3.0-flash-fin-free', 'mimo-v2.5-free', 'laguna-s-2.1-free', 'nemotron-3.5-lightning-free'];
+  const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
+  let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
   function apiBase() {
     if (!isGitHubPages) return '';
@@ -166,7 +168,7 @@
     // Batasi lama menunggu upstream agar model yang menggantung tidak
     // memblok model lain (pakai AbortController + timeout 30 detik)
     const controller = new AbortController();
-    const timer = setTimeout(function () { controller.abort(); },30000);
+    const timer = setTimeout(function () { controller.abort(); },15000);
     let res;
     try {
       res = await fetch(api('/api/chat'), {
@@ -187,7 +189,20 @@
       throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
     }
 
-    const data = await res.json().catch(function () { return null; });
+    // Upstream kadang membalas header 200 lalu menahan body-nya; AbortController
+    // hanya memutus fase request,, jadi baca body dengan timeout mandiri agar
+    // model yang menggantung tidak membekukan engine selamanya..
+    let data;
+    try {
+      data = await Promise.race([
+        res.json().catch(function () { return null; }),
+        new Promise(function (resolve) {
+          setTimeout(function () { resolve(null); }, 15000);
+        })
+      ]);
+    } catch (e) {
+      throw new Error('upstream timeout: respons tidak selesai');
+    }
     // Upstream Zen kerap membalas HTTP  200 dengan badan error; anggap sebagai
     // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
 
@@ -196,19 +211,29 @@
       throw new Error('upstream error: ' + em);
     }
     const c = data.choices[0].message || {};
-    let fullText = c.content || c.reasoning_content || '';
+    // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
+
+    // mode non-streaming; baca juga sebagai cadangan bila content kosong..
+    let fullText = c.content || c.reasoning_content || c.reasoning || '';
     if (!fullText || !fullText.trim()) {
       throw new Error('upstream error: respons kosong');
     }
 
-    // Simulasikan mengetik agar terasa cepat dan responsif
-    const words = fullText.split(' ');
-    for (let i = 0; i < words.length; i++) {
-      fullText = words.slice(0, i + 1).join(' ');
-      onChunk(fullText);
-      await new Promise(r => setTimeout(r, 20)); // jeda 20ms
+    // Simulasikan mengetik agar terasa cepat dan responsif; bila onChunk tidak
+    // diberikan (mode paralel), langsung kembalikan teks penuh agar pemenang
+
+    // "tercepat" tidak tertunda oleh efek ketik buatan.
+
+
+    const finalText = fullText;
+    if (onChunk) {
+      const words = finalText.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        onChunk(words.slice(0, i + 1).join(' '));
+        await new Promise(r => setTimeout(r, 20)); // jeda 20ms
+      }
     }
-    return fullText;
+    return finalText;
   }
 
   function buildThreadHistory() {
@@ -290,14 +315,14 @@
 
     const typing = typingIndicator();
     const selected = model.value;
-    
+
     try {
       typing.remove();
       const msgEls = createAssistantMessage();
-      
+
       let fullText = '';
       let lastRender = 0;
-      
+
       const renderChunk = (text) => {
         fullText = text;
         const now = Date.now();
@@ -308,13 +333,16 @@
         }
       };
 
-      // Tentukan daftar model yang akan dicoba
+      // Daftar model yang akan dicoba. Bila mode "Auto"(semua), semua model
+      // dijalankan PARALEL sekaligus dan jawaban tercepat yang menang; bila
+      // model tunggal dipilih, model itu dicoba penuh dulu baru cadangan otomatis..
       let modelsToTry = [];
-      if (selected && selected !== 'semua') {
+      const isAll = !selected || selected === 'semua';
+      if (selected && !isAll) {
         modelsToTry.push(selected);
       }
-      // Tambahkan semua model gratis sebagai cadangan jika model utama gagal
-      FREE_MODELS.forEach(function(m) {
+      const backupOrder = FREE_MODELS.concat(zaiEnabled ? ZAI_MODELS : []);
+      backupOrder.forEach(function (m) {
         if (modelsToTry.indexOf(m) === -1) modelsToTry.push(m);
       });
 
@@ -322,13 +350,15 @@
       let lastError = null;
 
       // Upstream gratis sering 503/error sesaat; coba ulang penuh dengan backoff agar
-      // user tetap dapat jawaban begitu provider pulih.
-      const MAX_ATTEMPTS = 4;
+
+      // user tetap dapat jawaban begitu provider pulih. Model yang menggantung
+      // (timeout 15s per model) tidak memblokir pemenang tercepat..
+      const MAX_ATTEMPTS = 2;
       const delayMs = (function () {
         let base = 800;
         return function (attempt) {
           const jitter = Math.floor(Math.random() * 400);
-          return base * Math.pow(2, attempt) + jitter; // ~1.2s,, 2s,, 3.6s,, 6.8s
+          return base * Math.pow(2, attempt) + jitter; // ~1.2s,, 2s
         };
       })();
       for (let attempt =  0; attempt < MAX_ATTEMPTS && !success; attempt++) {
@@ -336,38 +366,56 @@
           setStatus('on', 'server sibuk, mencoba lagi… (' + attempt + '/' + (MAX_ATTEMPTS - 1) + ')');
           await new Promise(r => setTimeout(r, delayMs(attempt)));
         }
-        for (let i =0; i < modelsToTry.length; i++) {
-          let modelToUse = modelsToTry[i];
+        // Auto: jalankan model dalam batch paralel kecil (maks 2 per batch).
+        // Ramah rate-limit upstream; Promise.any mengambil jawaban tercepat
+
+        // yang sukses dan tidak mungkin menggantung..
+        const batchSize = 2;
+        const pendingPool = isAll ? modelsToTry.slice() : (modelsToTry[0] ? [modelsToTry[0]] : []);
+        let roundErr = null;
+        if (!isAll) {
+          pendingPool.length = Math.min(pendingPool.length, 1);
+        }
+        for (let bi = 0; bi < pendingPool.length && !success; bi += batchSize) {
+
+          const batch = pendingPool.slice(bi, bi + batchSize);
+          setStatus('on', 'mencoba: ' + batch.join(' + '));
+          const attempts = batch.map(function (name) {
+            return streamChat(name, buildThreadHistory(), null).then(function (t) { return { name: name, text: t }; }).catch(function (err) {
+              console.warn('Model ' + name + ' gagal:', err.message);
+              if (!lastError) lastError = err;
+              roundErr = err;
+              throw err;
+            });
+          });
           try {
-            setStatus('on', 'mencoba model: ' + modelToUse + '…');
-            await streamChat(modelToUse, buildThreadHistory(), renderChunk);
+            const won = await Promise.any(attempts);
+            fullText = won.text;
+            renderChunk(fullText);
             success = true;
-            break; // Berhenti jika sudah dapat jawaban
           } catch (err) {
-            console.warn('Model ' + modelToUse + ' gagal:', err.message);
-            lastError = err;
-            // Lanjut ke model cadangan untuk semua error HTTP 4xx/5xx,
-            // error upstream (badan error 200, timeout, proxy), agar
-            // user tetap dapat jawaban.
-            if (!/4\d{2}|5\d{2}|upstream|timeout|fetch failed/i.test(err.message)) {
+            // Promise.any menolak AggregateError bila semua model pada batch gagal..
+            // Normalisasi agar retry/fallback berjalan untuk semua error upstream..
+            const why = (err && Array.isArray(err.errors)) ? err.errors.map(function (e) { return (e && e.message) || e; }).join('; ') : (err && err.message);
+            const checkable = why || '';
+            // Semua model pada batch ini gagal; lanjut batch berikutnya (atau retry).
+            if (!/4\d{2}|5\d{2}|upstream|timeout|fetch failed/i.test(checkable)) {
               throw err;
             }
           }
         }
         if (!success) {
-          // Semua model gagal di gelombang ini; beri jeda lebih lama agar
-          // upstream punya waktu pulih sebelum gelombang berikutnya.
-          if (attempt < MAX_ATTEMPTS - 1) {
+          lastError = roundErr || lastError || new Error('Semua model gagal pada gelombang ini.');
+          if (attempt < MAX_ATTEMPTS -  1) {
             setStatus('on', 'semua model sibuk, menunggu lalu mencoba lagi…');
             await new Promise(r => setTimeout(r, 2500));
           }
         }
       }
-
       if (!success) {
         throw lastError || new Error('Semua model sedang tidak tersedia.');
       }
-      
+
       // Render final
       msgEls.inner.innerHTML = decorateText(fullText);
       current.items.push({ role: 'assistant', content: fullText });
@@ -376,11 +424,11 @@
       typing.remove();
       const friendly = 'Terjadi kesalahan saat menghubungi server.\nDetail: ' + err.message + '\n\nMohon tunggu beberapa saat lalu coba lagi.';
       current.items.push({ role: 'assistant', content: friendly });
-      
+
       const errEl = createAssistantMessage();
       errEl.wrap.classList.add('err');
       errEl.inner.innerHTML = decorateText(friendly);
-      
+
       setStatus('err', 'gagal');
     } finally {
       busy = false;
@@ -389,9 +437,9 @@
       updateThreadList();
     }
   }
-      
 
-  form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
+
+form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
   input.addEventListener('input', resize);
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
@@ -464,13 +512,22 @@
       .then(function (r) { return r.json(); })
       .catch(function () { return { data: [] }; })
       .then(function (data) {
-        let all = (data.data || []).map(function (m) { return m.id; });
-        const candidates = FREE_MODELS;
+        // Status backend: apakah upstream Z.ai (GLM) tersedia. Ini dipakai
+        // untuk mengunci model GLM di sidebar bila backend tak punya ZAI_API_KEY..
+        return fetch(api('/api/status')).then(function (r) { return r.json(); }).catch(function () { return {}; }).then(function (st) {
+          return { data: data, zai: !!(st && st.zai && st.zai.available) };
+        });
+      })
+      .then(function (ctx) {
+        let all = (ctx.data.data || []).map(function (m) { return m.id; });
+        const zaiOn = ctx.zai;
+        zaiEnabled = zaiOn;
+        const candidates = FREE_MODELS.concat(zaiOn ? ZAI_MODELS : []);
         candidates.forEach(function (id) {
           if (all.indexOf(id) === -1) all.push(id);
         });
         const ready = all.filter(function (id) { return candidates.indexOf(id) !== -1; });
-        renderModelNames(ready, ready);
+        renderModelNames(ready, zaiOn ? ready : ready.filter(function (id) { return FREE_MODELS.indexOf(id) !== -1; }));
         populateModelSelect(ready, ready);
         setStatus('on', 'terhubung');
       })
