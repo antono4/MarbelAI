@@ -1,1 +1,34 @@
-Last updated: 2026-10-09 08:06:58 WIB
+# marbel-ai
+
+Marbel AI chat UI - backend proxy ke endpoint OpenAI-compatible + static UI
+
+## 📋 Overview
+
+This repository contains **17 files** and is built with the following technologies:
+
+Node.js, HTML, CSS, JavaScript, Docker
+
+## 🚀 Quick Start
+
+```bash
+npm install
+npm run dev
+npm run build
+```
+
+## ✨ Features
+
+- 🐳 Docker support
+- 🔧 Environment config included
+- 📝 Auto-generated documentation
+
+## 🛠️ Technologies
+
+Node.js, HTML, CSS, JavaScript, Docker
+
+## 📄 License
+
+MIT License
+
+---
+*Last updated: 2026-10-09 08:15:37 WIB*
