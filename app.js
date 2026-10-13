@@ -15,6 +15,49 @@
   const sideToggle = document.getElementById('sideToggle');
   const layoutEl = document.querySelector('.layout');
   const themeSwitch = document.querySelector('.theme-switch');
+  const panelHide = document.getElementById('panelHide');
+  const dolaToggle = document.getElementById('dolaToggle');
+
+  // ---- Sidebar (drawer di ponsel) --------------------------------------
+  // Visibilitas scrim selalu diturunkan dari kelas `collapsed` supaya tidak
+  // perlu disinkronkan manual di setiap tempat yang mengubahnya.
+  const scrim = document.createElement('button');
+  scrim.type = 'button';
+  scrim.className = 'scrim';
+  scrim.tabIndex = -1;
+  scrim.setAttribute('aria-hidden', 'true');
+  scrim.setAttribute('aria-label', 'Tutup sidebar');
+  document.querySelector('.main').appendChild(scrim);
+
+  function isNarrow() { return window.innerWidth <= 768; }
+  function sidebarOpen() { return !layoutEl.classList.contains('collapsed'); }
+
+  function syncSidebar() {
+    scrim.classList.toggle('show', isNarrow() && sidebarOpen());
+    if (sideToggle) {
+      sideToggle.title = sidebarOpen() ? 'Sembunyikan sidebar' : 'Tampilkan sidebar';
+      sideToggle.setAttribute('aria-expanded', sidebarOpen() ? 'true' : 'false');
+    }
+    if (panelHide) {
+      panelHide.title = sidebarOpen() ? 'Sembunyikan panel' : 'Tampilkan panel';
+      panelHide.setAttribute('aria-expanded', sidebarOpen() ? 'true' : 'false');
+    }
+  }
+
+  scrim.addEventListener('click', function () { layoutEl.classList.add('collapsed'); });
+  new MutationObserver(syncSidebar).observe(layoutEl, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('resize', syncSidebar);
+  if (isNarrow()) layoutEl.classList.add('collapsed');
+
+  // Salinan kedua kartu saran agar animasi "roll" berulang mulus (-50%).
+  if (suggestions) {
+    Array.prototype.slice.call(suggestions.children).forEach(function (btn) {
+      const clone = btn.cloneNode(true);
+      clone.setAttribute('aria-hidden', 'true');
+      clone.tabIndex = -1;
+      suggestions.appendChild(clone);
+    });
+  }
 
   let busy = false;
   let threadId = 0;
@@ -159,22 +202,42 @@
 
   // === FITUR STREAMING BARU ===
   // Memunculkan jawaban AI kata demi kata agar tidak terasa lambat
-  
+
+  // === DoLa (Decoding by Contrasting Layers, arXiv:2309.03883) ===
+  // Saat aktif, backend mengontraskan logprobs dua model (mature vs premature)
+  // untuk jawaban yang lebih faktual. Karena butuh dua panggilan model,
+  // timeout klien dinaikkan agar tidak terpotong.
+  let dolaOn = false;
+  try { dolaOn = localStorage.getItem('marbel-dola') === '1'; } catch (e) {}
+  function syncDola() {
+    if (dolaToggle) dolaToggle.setAttribute('aria-pressed', dolaOn ? 'true' : 'false');
+  }
+  syncDola();
+  if (dolaToggle) {
+    dolaToggle.addEventListener('click', function () {
+      dolaOn = !dolaOn;
+      try { localStorage.setItem('marbel-dola', dolaOn ? '1' : '0'); } catch (e) {}
+      syncDola();
+    });
+  }
+
   // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
   async function streamChat(modelId, messages, onChunk) {
     setStatus('on', 'menunggu jawaban...');
 
     // Batasi lama menunggu upstream agar model yang menggantung tidak
-    // memblok model lain (pakai AbortController + timeout 30 detik)
+    // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
+    // butuh dua panggilan jadi diberi jendela lebih longgar).
+    const timeoutMs = dolaOn ? 75000 : 30000;
     const controller = new AbortController();
-    const timer = setTimeout(function () { controller.abort(); },15000);
+    const timer = setTimeout(function () { controller.abort(); },timeoutMs);
     let res;
     try {
       res = await fetch(api('/api/chat'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: modelId, messages, stream: false }),
+        body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
         signal: controller.signal
       });
     } catch (e) {
@@ -444,13 +507,18 @@ form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
   });
-  newThreadBtn.addEventListener('click', newThread);
+  newThreadBtn.addEventListener('click', function () {
+    if (isNarrow()) layoutEl.classList.add('collapsed');
+    newThread();
+  });
   sideToggle.addEventListener('click', function () {
     layoutEl.classList.toggle('collapsed');
-    sideToggle.title = layoutEl.classList.contains('collapsed')
-      ? 'Tampilkan sidebar'
-      : 'Sembunyikan sidebar';
   });
+  if (panelHide) {
+    panelHide.addEventListener('click', function () {
+      layoutEl.classList.toggle('collapsed');
+    });
+  }
   if (themeSwitch) {
     themeSwitch.addEventListener('click', function (e) {
       const btn = e.target.closest('.tsw-btn');
@@ -459,7 +527,10 @@ form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
   }
   suggestions.addEventListener('click', function (e) {
     const btn = e.target.closest('button[data-prompt]');
-    if (btn) onSend(btn.getAttribute('data-prompt'));
+    if (btn) {
+      if (isNarrow()) layoutEl.classList.add('collapsed');
+      onSend(btn.getAttribute('data-prompt'));
+    }
   });
 
   const modelListEl = document.getElementById('modelNames');
@@ -539,5 +610,6 @@ form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
 
   initTheme();
   newThread();
+  syncSidebar();
   loadModels();
 })();

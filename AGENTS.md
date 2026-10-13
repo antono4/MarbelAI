@@ -19,11 +19,8 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 
 - `nemotron-3.5-lightning-free` — sangat lambat (>9s) tapi tetap dicoba sebagai cadangan..
 
-
-- `nemotron-3-ultra-free` — **tidak dipakai lagi**; request menggantung( timeout 15s) tanpa respons..
-- `hy3-free` — **sudah tidak didukung** upstream..
-- `deepseek-v4-flash-free`, `muse-spark-1.2-contributor-free` — error dari provider..
-- Model non-free di upstream Zen(Gemini/GPT/Claude/dll.) butuh API key; hanya yang berakhiran `-free` yang gratis..
+## Pola ensemble
+- Mode "Semua Model": jalankan 6 model (termasuk Z.ai GLM bila ada key); langsung resolve setelah 2 sukses (biasanya ling + nemotron-3-ultra dalam ~1-2s., lalu agregator gabungkan jawaban.
 
 
 
@@ -34,6 +31,17 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - Server punya upstream cadangan: `ZAI_UPSTREAM`(default https://api.z.ai/api/paas/v4) dipakai bila upstream utama(Zen) gagal/401/5xx dan `ZAI_API_KEY` tersedia.. Endpoint URL dibangun otomatis(Zen pakai prefix `/v1`, Z.ai pakai `/chat/completions` di bawah `/api/`)..
 
 
+## DoLa — Decoding by Contrasting Layers (arXiv:2309.03883)
+
+- `dola.js` mengimplementasikan inti paper DoLa (Chuang et al., ICLR 2024): kontras log-domain `F(q_N,q_M)=log q_N(x)-log q_M(x)`, Adaptive Plausibility Constraint (APC, `alpha`), repetition penalty (`theta`), dan pemilihan berbasis jarak distribusi (JSD).
+- **Adaptasi penting:** paper mengontraskan antar-LAYER transformer; Marbel AI hanya klien API OpenAI-compatible sehingga layer internal tak bisa diakses. Karena itu kontras diterapkan pada level TOKEN memakai `logprobs` API, antara dua MODEL: mature (kuat/faktual, default `DOLA_MATURE_MODEL`) vs premature (lemah/lancar, default `DOLA_PREMATURE_MODEL`). Ini secara teknis Contrastive Decoding (baseline di paper), tetapi semua rumus inti DoLa dipertahankan apa adanya.
+- Penjajaran token mature vs premature memakai LCS (`lcsAlign`) agar kontras hanya diterapkan pada posisi yang konteksnya cocok; token lain tetap memakai keluaran mature sehingga jawaban tidak rusak.
+- **Fallback aman:** bila provider tidak mengirim `logprobs`, `runDola` mengembalikan `null` dan proxy lanjut ke dekode biasa. Jadi DoLa tak pernah lebih buruk dari baseline.
+- Aktif lewat env `DOLA_ENABLED=1` atau per-request `{"dola": true}` (tombol **DoLa** di composer; `app.js` menyimpan preferensi di `localStorage` `marbel-dola` dan menaikkan timeout klien ke 75s).
+- Konfigurasi: `DOLA_MATURE_MODEL`, `DOLA_PREMATURE_MODEL`, `DOLA_ALPHA`, `DOLA_REPETITION_PENALTY`, `DOLA_TOP_LOGPROBS`. Model mature dilayani Z.ai (butuh `ZAI_API_KEY`); bila kosong, memakai model yang diminta user.
+- Tes: `npm test` (node:test) — unit `test/dola.test.js` + integrasi `test/server.test.js` (upstream tiruan dengan logprobs).
+
+## Retry saat semua model tidak merespon
 
 ## Endpoint backend
 
@@ -48,6 +56,16 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - Mode single model: dropdown `#model` terhubung ke engine yang sama;; bila model pilihan gagal, jatuh ke cadangan otomatis sampai dapat jawaban..
 - `streamChat` menerima `onChunk` opsional: bila diberikan, mensimulasikan efek mengetik(20ms/kata); bila `null`(mode paralel,, langsung mengembalikan teks penuh supaya pemenang tercepat tidak tertunda oleh efek ketik buatan..
 
+## Tampilan (UI terlampir, tema gelap ala Gemini)
+
+- `index.html` + `styles.css` memakai gaya desain "terlampir": default **gelap** (`--bg:#131314`), aksen biru-ungu-merah (`--accent:#4285f4`, `--accent-2:#9b72cb`, `--accent-3:#d96570`), sidebar drawer, strip saran berjalan, daftar model, composer mengambang.
+- Pemilih tema asli tetap ada (4 tema) dan kini memakai token `--bg/--bg-soft/--line/--accent/--panel/--composer`: `green` (default), `ocean`, `sunset`, `light`. Tombol `.tsw-btn[data-theme]` + `.theme-switch` dipertahankan karena `app.js` membacanya.
+- Kontrak DOM `app.js` **wajib** dipertahankan saat mengubah markup: id `welcome`, `messages`, `activeBadge`, `form`, `input`, `model`, `send`, `newThread`, `threadList`, `suggestions`, `statusDot`, `statusLabel`, `sideToggle`, `modelNames`, `modelCount`; kelas `.layout`, `.theme-switch`, `.tsw-btn`, `.mname`, `.msg`/`.role-tag`/`.ubody`.
+- `.scrim` dibuat runtime di `app.js` (di dalam `.main`); sidebar disembunyikan lewat kelas `collapsed` di `.layout`, dan di ponsel (`≤768px`) jadi drawer + scrim.
+- Strip saran `#suggestions.track` beranimasi `roll` 46s; `app.js` menggandakan kartu secara otomatis agar loop mulus (tanpa perlu duplikat di markup).
+- Kartu saran memakai `data-prompt`; `app.js` mengirim teksnya lewat `onSend`.
+
+## Catatan penting
 
 
 ## Retry & failover
