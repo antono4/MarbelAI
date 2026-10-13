@@ -27,7 +27,6 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - Server kini punya upstream cadangan: `ZAI_UPSTREAM` (default https://api.z.ai/api/paas/v4) dipakai otomatis bila upstream utama (Zen) gagal/401/5xx dan `ZAI_API_KEY` tersedia. Endpoint URL dibangun otomatis (Zen pakai prefix `/v1`, Z.ai pakai `/chat/completions` di bawah `/api/`).
 
 ## Pola ensemble
-
 - Mode "Semua Model": jalankan 6 model (termasuk Z.ai GLM bila ada key); langsung resolve setelah 2 sukses (biasanya ling + nemotron-3-ultra dalam ~1-2s., lalu agregator gabungkan jawaban.
 
 
@@ -35,6 +34,16 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - Mode single model: dropdown `#model` kini terhubung ke `chatEnsemble(messages, selected))`. Bila model pilihan gagal, jatuh ke ensemble cadangan agar user tetap dapat jawaban.
 
 
+
+## DoLa — Decoding by Contrasting Layers (arXiv:2309.03883)
+
+- `dola.js` mengimplementasikan inti paper DoLa (Chuang et al., ICLR 2024): kontras log-domain `F(q_N,q_M)=log q_N(x)-log q_M(x)`, Adaptive Plausibility Constraint (APC, `alpha`), repetition penalty (`theta`), dan pemilihan berbasis jarak distribusi (JSD).
+- **Adaptasi penting:** paper mengontraskan antar-LAYER transformer; Marbel AI hanya klien API OpenAI-compatible sehingga layer internal tak bisa diakses. Karena itu kontras diterapkan pada level TOKEN memakai `logprobs` API, antara dua MODEL: mature (kuat/faktual, default `DOLA_MATURE_MODEL`) vs premature (lemah/lancar, default `DOLA_PREMATURE_MODEL`). Ini secara teknis Contrastive Decoding (baseline di paper), tetapi semua rumus inti DoLa dipertahankan apa adanya.
+- Penjajaran token mature vs premature memakai LCS (`lcsAlign`) agar kontras hanya diterapkan pada posisi yang konteksnya cocok; token lain tetap memakai keluaran mature sehingga jawaban tidak rusak.
+- **Fallback aman:** bila provider tidak mengirim `logprobs`, `runDola` mengembalikan `null` dan proxy lanjut ke dekode biasa. Jadi DoLa tak pernah lebih buruk dari baseline.
+- Aktif lewat env `DOLA_ENABLED=1` atau per-request `{"dola": true}` (tombol **DoLa** di composer; `app.js` menyimpan preferensi di `localStorage` `marbel-dola` dan menaikkan timeout klien ke 75s).
+- Konfigurasi: `DOLA_MATURE_MODEL`, `DOLA_PREMATURE_MODEL`, `DOLA_ALPHA`, `DOLA_REPETITION_PENALTY`, `DOLA_TOP_LOGPROBS`. Model mature dilayani Z.ai (butuh `ZAI_API_KEY`); bila kosong, memakai model yang diminta user.
+- Tes: `npm test` (node:test) — unit `test/dola.test.js` + integrasi `test/server.test.js` (upstream tiruan dengan logprobs).
 
 ## Retry saat semua model tidak merespon
 

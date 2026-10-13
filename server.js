@@ -23,6 +23,17 @@ const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
 const ZAI_UPSTREAM = process.env.ZAI_UPSTREAM || 'https://api.z.ai/api/paas/v4';
 const ZAI_API_KEY = process.env.ZAI_API_KEY || '';
 
+// --- DoLa (Decoding by Contrasting Layers) ----------------------------
+// Inti paper arXiv:2309.03883 diadaptasi ke level token di atas `logprobs`
+// API (lihat dola.js). Nonaktif secara default; nyalakan dengan DOLA_ENABLED=1.
+const dola = require('./dola.js');
+const DOLA_ENABLED = String(process.env.DOLA_ENABLED || '0') === '1';
+const DOLA_MATURE_MODEL = process.env.DOLA_MATURE_MODEL || 'glm-4.7-flash';
+const DOLA_PREMATURE_MODEL = process.env.DOLA_PREMATURE_MODEL || 'ling-3.0-flash-fin-free';
+const DOLA_ALPHA = Number(process.env.DOLA_ALPHA || '0.1');
+const DOLA_RP = Number(process.env.DOLA_REPETITION_PENALTY || '1.2');
+const DOLA_TOP_LOGPROBS = Number(process.env.DOLA_TOP_LOGPROBS || '20');
+
 // Zen memakai prefix /v1 di dasar URL; Z.ai memakai v4 langsung di jalur /api/.
 function upstreamChatUrl(base) {
   if (base.endsWith('/v1/chat/completions') || base.endsWith('/chat/completions')) return base;
@@ -61,8 +72,68 @@ function callUpstream(baseUrl, apiKey, payload, accept, timeoutMs, kind) {
     req.end();
   });
 }
-const ROOT = __dirname;
+// --- DoLa: dekode kontras dua model ------------------------------------
+// Panggil satu model dengan logprobs dan kembalikan {text, logprobs}.
+async function callWithLogprobs(base, apiKey, payload, model, timeoutMs) {
+  const p = Object.assign({}, payload, {
+    model: model,
+    stream: false,
+    logprobs: true,
+    top_logprobs: DOLA_TOP_LOGPROBS,
+  });
+  delete p.dola; delete p.marbel_dola;
+  const r = await callUpstream(base, apiKey, p, 'application/json', timeoutMs, 'chat');
+  if (!r || r.status < 200 || r.status >= 300) return null;
+  let data;
+  try { data = JSON.parse(r.body.toString('utf8')); } catch (_) { return null; }
+  const choice = data && data.choices && data.choices[0];
+  if (!choice || !choice.message) return null;
+  const text = choice.message.content || choice.message.reasoning_content || '';
+  if (!text || !text.trim()) return null;
+  return { text: text, logprobs: choice.logprobs || null };
+}
 
+// Jalankan DoLa: dapatkan logprobs dari model mature & premature, lalu
+// kontraskan (dola.dolaDecode). Mengembalikan objek respons OpenAI-compatible
+// atau null bila logprobs tidak tersedia (pemanggil lalu fallback).
+async function runDola(payload, authHeader) {
+  const zenKey = authHeader || '';
+  const requested = (payload.model && payload.model !== 'semua') ? payload.model : null;
+  // Model mature: pakai Z.ai (GLM) bila key tersedia, jika tidak pakai upstream
+  // utama dengan model yang diminta user. Model premature selalu di upstream
+  // utama (Zen). "semua" bukan model konkret sehingga diabaikan.
+  const hasZai = !!ZAI_API_KEY;
+  const matureBase = hasZai ? ZAI_UPSTREAM : UPSTREAM;
+  const matureKey = hasZai ? (ZAI_API_KEY || authHeader || '') : zenKey;
+  const matureModel = hasZai ? (DOLA_MATURE_MODEL || requested) : (requested || DOLA_PREMATURE_MODEL);
+  const prematureModel = requested || DOLA_PREMATURE_MODEL;
+  if (!matureModel || !prematureModel) return null;
+  const mature = await callWithLogprobs(matureBase, matureKey, payload, matureModel, 30000).catch(function () { return null; });
+  if (!mature || !mature.logprobs) return null;
+  const premature = await callWithLogprobs(UPSTREAM, zenKey, payload, prematureModel, 30000).catch(function () { return null; });
+
+  let text = mature.text;
+  let info = null;
+  if (premature && premature.logprobs) {
+    const decoded = dola.dolaDecode(mature.logprobs, premature.logprobs, {
+      alpha: DOLA_ALPHA, repetitionPenalty: DOLA_RP,
+    });
+    if (decoded && decoded.text && decoded.text.trim()) {
+      text = decoded.text;
+      info = { changed: decoded.changed, meanJsd: decoded.meanJsd, aligned: decoded.aligned, tokens: decoded.tokens };
+    }
+  }
+  return {
+    id: 'dola-' + Date.now(),
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: matureModel + '+dola',
+    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+    marbel_dola: info || { changed: 0, meanJsd: 0, note: 'premature logprobs tidak tersedia' },
+  };
+}
+
+const ROOT = __dirname;
 const CORS_HEADERS = {
   'access-control-allow-origin': ALLOW_ORIGIN,
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -109,6 +180,25 @@ function proxyOpenAI(req, res) {
       const authHeader = clientAuth || (API_KEY ? 'Bearer ' + API_KEY : '');
       const accept = isStream ? 'text/event-stream' : (req.headers.accept || 'application/json');
       const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+
+      // Jalur DoLa: bila diaktifkan (env DOLA_ENABLED=1 atau payload.dola),
+      // hasilkan jawaban lewat kontras dua model + logprobs. Bila gagal
+      // (mis. provider tak mengirim logprobs), jatuh ke dekode biasa.
+      const wantDola = (DOLA_ENABLED || payload.dola === true || payload.marbel_dola === true)
+        && payload.stream !== true
+        && Array.isArray(payload.messages) && payload.messages.length > 0;
+      if (wantDola) {
+        const dolaRes = await runDola(payload, authHeader).catch(function () { return null; });
+        if (dolaRes) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(dolaRes));
+          resolve();
+          return;
+        }
+      }
+      // Jangan teruskan flag internal ke upstream (bisa ditolak sebagai
+      // parameter tak dikenal).
+      delete payload.dola; delete payload.marbel_dola;
 
       function sendResult(upRes) {
         const target = res;

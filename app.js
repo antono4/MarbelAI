@@ -16,6 +16,7 @@
   const layoutEl = document.querySelector('.layout');
   const themeSwitch = document.querySelector('.theme-switch');
   const panelHide = document.getElementById('panelHide');
+  const dolaToggle = document.getElementById('dolaToggle');
 
   // ---- Sidebar (drawer di ponsel) --------------------------------------
   // Visibilitas scrim selalu diturunkan dari kelas `collapsed` supaya tidak
@@ -199,22 +200,42 @@
 
   // === FITUR STREAMING BARU ===
   // Memunculkan jawaban AI kata demi kata agar tidak terasa lambat
-  
+
+  // === DoLa (Decoding by Contrasting Layers, arXiv:2309.03883) ===
+  // Saat aktif, backend mengontraskan logprobs dua model (mature vs premature)
+  // untuk jawaban yang lebih faktual. Karena butuh dua panggilan model,
+  // timeout klien dinaikkan agar tidak terpotong.
+  let dolaOn = false;
+  try { dolaOn = localStorage.getItem('marbel-dola') === '1'; } catch (e) {}
+  function syncDola() {
+    if (dolaToggle) dolaToggle.setAttribute('aria-pressed', dolaOn ? 'true' : 'false');
+  }
+  syncDola();
+  if (dolaToggle) {
+    dolaToggle.addEventListener('click', function () {
+      dolaOn = !dolaOn;
+      try { localStorage.setItem('marbel-dola', dolaOn ? '1' : '0'); } catch (e) {}
+      syncDola();
+    });
+  }
+
   // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
   async function streamChat(modelId, messages, onChunk) {
     setStatus('on', 'menunggu jawaban...');
 
     // Batasi lama menunggu upstream agar model yang menggantung tidak
-    // memblok model lain (pakai AbortController + timeout 30 detik)
+    // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
+    // butuh dua panggilan jadi diberi jendela lebih longgar).
+    const timeoutMs = dolaOn ? 75000 : 30000;
     const controller = new AbortController();
-    const timer = setTimeout(function () { controller.abort(); },30000);
+    const timer = setTimeout(function () { controller.abort(); },timeoutMs);
     let res;
     try {
       res = await fetch(api('/api/chat'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: modelId, messages, stream: false }),
+        body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
         signal: controller.signal
       });
     } catch (e) {
