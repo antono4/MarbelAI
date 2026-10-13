@@ -4,12 +4,47 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = Number(process.env.PORT) || 12000;
-const UPSTREAM = process.env.UPSTREAM || 'http://localhost:20128';
+// Upstream OpenAI-compatible — model gratis dari daftar no-cost-ai, tanpa API
+// key. Sama dengan MarbelAIv2.1: uncloseai + pollinations + Free.ai.
+const UPSTREAM = process.env.UPSTREAM || 'https://hermes.ai.unturf.com,https://qwen.ai.unturf.com,https://text.pollinations.ai,https://api.free.ai';
 // Pick the transport module matching the UPSTREAM protocol so https://
 // upstreams (e.g. Render public URLs) work instead of throwing.
 const ssl = UPSTREAM.startsWith('https://') ? https : http;
+
+// Pemetaan model per upstream, agar failover tetap menghasilkan jawaban saat
+// model UI (mis. qwen3.8-27b) tidak dikenal di provider berikutnya.
+// uncloseai kini hanya melayani satu model: turboderp/Qwen3.8-27B-exl3.
+const UNCLOSEAI_MODEL = 'turboderp/Qwen3.8-27B-exl3';
+const UPSTREAM_MODEL_MAP = {
+  'https://hermes.ai.unturf.com': { 'qwen3.8-27b': UNCLOSEAI_MODEL, 'gpt-oss-20b': UNCLOSEAI_MODEL, 'qwen3-8b': UNCLOSEAI_MODEL },
+  'https://qwen.ai.unturf.com': { 'qwen3.8-27b': UNCLOSEAI_MODEL, 'gpt-oss-20b': UNCLOSEAI_MODEL, 'qwen3-8b': UNCLOSEAI_MODEL },
+  'https://text.pollinations.ai': { 'qwen3.8-27b': 'openai', 'gpt-oss-20b': 'openai', 'qwen3-8b': 'openai' },
+  'https://api.free.ai': { 'qwen3.8-27b': 'qwen7b', 'gpt-oss-20b': 'qwen7b', 'qwen3-8b': 'qwen3-8b' },
+};
+// Payload tambahan per upstream: uncloseai memakai vLLM/Qwen yang andai berpikir,
+// matikan agar jawaban bersih (tidak dicampur proses berpikir).
+const UPSTREAM_PAYLOAD = {
+  'https://hermes.ai.unturf.com': { chat_template_kwargs: { enable_thinking: false } },
+  'https://qwen.ai.unturf.com': { chat_template_kwargs: { enable_thinking: false } },
+};
+// Daftar upstream (dipisah koma) dicoba berurutan; helper di bawah dipakai
+// bersama oleh proxy chat, /api/models, dan DoLa.
+function upstreamList() {
+  return UPSTREAM.split(',').map(function (u) { return u.trim(); }).filter(Boolean);
+}
+function firstUpstream() {
+  return upstreamList()[0] || UPSTREAM;
+}
+function mapModel(base, model) {
+  return (UPSTREAM_MODEL_MAP[base] && UPSTREAM_MODEL_MAP[base][model]) || model;
+}
 const API_KEY = process.env.API_KEY || '';
 const USE_SSE = String(process.env.USE_SSE || '1');
+// Daftar model yang disajikan /api/models dan ditampilkan UI (disamakan dengan
+// MarbelAIv2.1). Bukan daftar upstream, agar namanya konsisten.
+const MODELS_LIST = (
+  process.env.MODELS_LIST || 'qwen3.8-27b,gpt-oss-20b,qwen3-8b'
+).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 // Allow cross-origin calls (e.g. the GitHub Pages statically-served UI) to reach
 // this backend's /api/chat. Restrict with a specific origin for production if desired.
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
@@ -29,7 +64,7 @@ const ZAI_API_KEY = process.env.ZAI_API_KEY || '';
 const dola = require('./dola.js');
 const DOLA_ENABLED = String(process.env.DOLA_ENABLED || '0') === '1';
 const DOLA_MATURE_MODEL = process.env.DOLA_MATURE_MODEL || 'glm-4.7-flash';
-const DOLA_PREMATURE_MODEL = process.env.DOLA_PREMATURE_MODEL || 'ling-3.0-flash-fin-free';
+const DOLA_PREMATURE_MODEL = process.env.DOLA_PREMATURE_MODEL || 'qwen3-8b';
 const DOLA_ALPHA = Number(process.env.DOLA_ALPHA || '0.1');
 const DOLA_RP = Number(process.env.DOLA_REPETITION_PENALTY || '1.2');
 const DOLA_TOP_LOGPROBS = Number(process.env.DOLA_TOP_LOGPROBS || '20');
@@ -103,14 +138,14 @@ async function runDola(payload, authHeader) {
   // utama dengan model yang diminta user. Model premature selalu di upstream
   // utama (Zen). "semua" bukan model konkret sehingga diabaikan.
   const hasZai = !!ZAI_API_KEY;
-  const matureBase = hasZai ? ZAI_UPSTREAM : UPSTREAM;
+  const matureBase = hasZai ? ZAI_UPSTREAM : firstUpstream();
   const matureKey = hasZai ? (ZAI_API_KEY || authHeader || '') : zenKey;
   const matureModel = hasZai ? (DOLA_MATURE_MODEL || requested) : (requested || DOLA_PREMATURE_MODEL);
   const prematureModel = requested || DOLA_PREMATURE_MODEL;
   if (!matureModel || !prematureModel) return null;
   const mature = await callWithLogprobs(matureBase, matureKey, payload, matureModel, 30000).catch(function () { return null; });
   if (!mature || !mature.logprobs) return null;
-  const premature = await callWithLogprobs(UPSTREAM, zenKey, payload, prematureModel, 30000).catch(function () { return null; });
+  const premature = await callWithLogprobs(firstUpstream(), zenKey, payload, prematureModel, 30000).catch(function () { return null; });
 
   let text = mature.text;
   let info = null;
@@ -213,23 +248,32 @@ function proxyOpenAI(req, res) {
         target.end(upRes.body);
       }
 
-      // Coba upstream utama dulu; bila gagal (HTTP  4xx/5xx atau error
-      // jaringan/timeout) dan ZAI_API_KEY tersedia, coba upstream Z.ai (GLM).
-      const tryPrimary = await callUpstream(UPSTREAM, authHeader, payload, accept, 30000, 'chat').then(function (r) {
-        return r;
-      }).catch(function () { return null; });
-      if (tryPrimary && tryPrimary.status >= 200 && tryPrimary.status < 300) {
-        sendResult(tryPrimary); resolve(); return;
-      }
-      if (ZAI_API_KEY) {
-        const tryZai = await callUpstream(ZAI_UPSTREAM, ZAI_API_KEY, payload, accept, 30000, 'chat').then(function (r) {
-          return r;
-        }).catch(function () { return null; });
-        if (tryZai && tryZai.status >= 200 && tryZai.status < 300) {
-          sendResult(tryZai); resolve(); return;
+        // Coba upstream utama dulu; bila gagal (HTTP  4xx/5xx atau error
+        // jaringan/timeout) dan ZAI_API_KEY tersedia, coba upstream Z.ai (GLM).
+        // Daftar UPSTREAM boleh berisi beberapa URL dipisah koma: dicoba
+        // berurutan supaya satu provider gratis yang sibuk/down tidak memblok.
+        let tryPrimary = null;
+        const upstreams = upstreamList();
+        for (let ui = 0; ui < upstreams.length; ui++) {
+          const base = upstreams[ui];
+          const outPayload = Object.assign({}, payload, UPSTREAM_PAYLOAD[base] || {}, { model: mapModel(base, payload.model) });
+          const r = await callUpstream(base, authHeader, outPayload, accept, 30000, 'chat').then(function (x) {
+            return x;
+          }).catch(function () { return null; });
+          if (!tryPrimary) tryPrimary = r;
+          if (r && r.status >= 200 && r.status < 300) {
+            sendResult(r); resolve(); return;
+          }
         }
-      }
-      // Semua upstream gagal — kirimkan hasil upstream utama bila ada.
+        if (ZAI_API_KEY) {
+          const tryZai = await callUpstream(ZAI_UPSTREAM, ZAI_API_KEY, payload, accept, 30000, 'chat').then(function (r) {
+            return r;
+          }).catch(function () { return null; });
+          if (tryZai && tryZai.status >= 200 && tryZai.status < 300) {
+            sendResult(tryZai); resolve(); return;
+          }
+        }
+        // Semua upstream gagal — kirimkan hasil upstream utama bila ada.
 
 
 
@@ -259,31 +303,12 @@ const server = http.createServer(async (req, res) => {
       await proxyOpenAI(req, res);
     } else if (req.method === 'GET' && urlPath === '/api/models') {
       applyCors(res);
-      const mkRes = function (upRes) {
-        res.writeHead(upRes.status, { 'content-type': upRes.headers['content-type'] || 'application/json' });
-        res.end(upRes.body);
-      };
-      callUpstream(UPSTREAM, '', null, 'application/json', 15000, 'models').then(async function (primary) {
-        if (primary && primary.status >= 200 && primary.status < 300) {
-          mkRes(primary); return;
-        }
-        if (ZAI_API_KEY) {
-          const zai = await callUpstream(ZAI_UPSTREAM, ZAI_API_KEY, null, 'application/json', 15000, 'models').catch(function () { return null; });
-          if (zai && zai.status >= 200 && zai.status < 300) {
-            mkRes(zai); return;
-          }
-        }
-        if (primary) {
-          mkRes(primary); return;
-        }
-        res.writeHead(502, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ data: [] }));
-      }).catch(function () {
-        if (!res.headersSent) {
-          res.writeHead(502, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ data: [] }));
-        }
-      });
+      // Daftar model statis (sama seperti MarbelAIv2.1), bukan dari upstream —
+      // supaya UI menampilkan nama model yang konsisten (qwen3.8-27b, dst),
+      // bukan nama internal provider (mis. turboderp/Qwen3.8-27B-exl3).
+      const list = MODELS_LIST.map(function (id) { return { id: id, object: 'model' }; });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ object: 'list', data: list }));
     } else if (req.method === 'GET' && urlPath === '/api/status') {
       applyCors(res);
       res.writeHead(200, { 'content-type': 'application/json' });
