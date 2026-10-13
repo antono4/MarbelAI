@@ -3,26 +3,31 @@
 ## Cara menjalankan
 
 ```bash
-PORT=12000 UPSTREAM=https://opencode.ai/zen node server.js
+PORT=12000 node server.js
 ```
 
 Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`) + proxy `/api/chat`, `/api/models`, dan `/api/status` ke upstream OpenAI-compatible. Tanpa dependency npm.
 
 
 
-## Model gratis(valid per 2026-08)
+## Model gratis — disamakan dengan MarbelAIv2.1
 
-- `ling-3.0-flash-fin-free` — cepat & stabil (~1s,. prioritas utama)
-- `mimo-v2.5-free` — populer, sesekali rate-limit
-- `laguna-s-2.1-free` — bisa sukses tapi lambat (4-9s..
+`FREE_MODELS` (app.js) & `MODELS_LIST`/model UI:
 
+- `qwen3.8-27b` (uncloseai — default)
+- `gpt-oss-20b` (pollinations)
+- `qwen3-8b` (Free.ai)
 
-- `nemotron-3.5-lightning-free` — sangat lambat (>9s) tapi tetap dicoba sebagai cadangan..
+Provider yang dipakai (sumber no-cost-ai, tanpa API key):
+- **uncloseai** (`hermes.ai.unturf.com`, `qwen.ai.unturf.com`) — CORS `*`, hanya melayani `turboderp/Qwen3.8-27B-exl3`.
+- **pollinations** (`text.pollinations.ai`) — CORS `*`, alias model `openai`.
+- **Free.ai** (`api.free.ai`) — model open-weight gratis.
+
+Model lama Zen (`ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `laguna-s-2.1-free`, `nemotron-3.5-lightning-free`) **sudah dibuang** agar selaras dengan v2.1. Untuk chat via halaman statis GitHub Pages, `app.js` memanggil provider ini langsung dari browser (failover berurutan); backend dipakai sebagai cadangan.
 
 ## Pola ensemble
-- Mode "Semua Model": jalankan 6 model (termasuk Z.ai GLM bila ada key); langsung resolve setelah 2 sukses (biasanya ling + nemotron-3-ultra dalam ~1-2s., lalu agregator gabungkan jawaban.
-
-
+- Mode "Semua Model": jalankan model gratis secara paralel dalam batch kecil; `Promise.any` mengambil jawaban tercepat yang sukses.
+- Mode single model: model pilihan dicoba penuh dulu, lalu cadangan otomatis (model gratis lain + GLM bila key tersedia).
 
 ## Model Z.ai(GLM)
 

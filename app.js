@@ -180,41 +180,62 @@
   let backendInUse = override || DEFAULT_BACKEND;
   const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
 
-  const FREE_MODELS = ['ling-3.0-flash-fin-free', 'mimo-v2.5-free', 'laguna-s-2.1-free', 'nemotron-3.5-lightning-free'];
+  const FREE_MODELS = ['qwen3.8-27b', 'gpt-oss-20b', 'qwen3-8b'];
   const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
   let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
-  // Provider CORS langsung: dipakai sebagai cadangan saat proxy backend tidak
-  // tersedia (mis. service Render tidur/404). Inilah yang membuat halaman
-  // statis GitHub Pages tetap bisa mengobrol tanpa backend terpisah.
+  // Provider CORS langsung — daftar model sama dengan MarbelAIv2.1.
+  //  - uncloseai (hermes.ai.unturf.com & qwen.ai.unturf.com) — CORS '*'.
+  //  - pollinations (text.pollinations.ai) — CORS '*', model alias `openai`.
+  //  - Free.ai (api.free.ai) — model open-weight gratis tanpa API key.
   const DIRECT_UPSTREAMS = [
     'https://hermes.ai.unturf.com',
     'https://qwen.ai.unturf.com',
+    'https://text.pollinations.ai',
+    'https://api.free.ai',
   ];
-  // uncloseai hanya melayani satu model, jadi semua nama model UI dipetakan ke sini.
-  const DIRECT_MODEL = 'turboderp/Qwen3.8-27B-exl3';
+  const DIRECT_PAYLOAD = {
+    // uncloseai memakai vLLM/Qwen yang andai berpikir; matikan agar jawaban bersih.
+    'https://hermes.ai.unturf.com': { chat_template_kwargs: { enable_thinking: false } },
+    'https://qwen.ai.unturf.com': { chat_template_kwargs: { enable_thinking: false } },
+    'https://text.pollinations.ai': {},
+    'https://api.free.ai': {},
+  };
+  // uncloseai kini hanya melayani satu model. pollinations mengenali alias
+  // `openai`; free.ai hanya qwen7b/qwen3-8b.
+  const UNCLOSEAI_MODEL = 'turboderp/Qwen3.8-27B-exl3';
+  const DIRECT_MODEL_MAP = {
+    'https://hermes.ai.unturf.com': { 'qwen3.8-27b': UNCLOSEAI_MODEL, 'gpt-oss-20b': UNCLOSEAI_MODEL, 'qwen3-8b': UNCLOSEAI_MODEL },
+    'https://qwen.ai.unturf.com': { 'qwen3.8-27b': UNCLOSEAI_MODEL, 'gpt-oss-20b': UNCLOSEAI_MODEL, 'qwen3-8b': UNCLOSEAI_MODEL },
+    'https://text.pollinations.ai': { 'qwen3.8-27b': 'openai', 'gpt-oss-20b': 'openai', 'qwen3-8b': 'openai' },
+    'https://api.free.ai': { 'qwen3.8-27b': 'qwen7b', 'gpt-oss-20b': 'qwen7b', 'qwen3-8b': 'qwen3-8b' },
+  };
 
   function directChatUrl(base) {
-    return base.replace(/\/$/, '') + '/v1/chat/completions';
+    const b = base.replace(/\/$/, '');
+    // pollinations menaruh endpoint OpenAI-compatible di `/openai`, bukan `/v1`.
+    if (b === 'https://text.pollinations.ai') return b + '/openai';
+    return b + '/v1/chat/completions';
   }
 
-  // Panggil provider langsung dari browser (CORS '*'), failover berurutan.
-  async function directChat(messages) {
+  // Panggil provider langsung dari browser (CORS), failover berurutan.
+  async function directChat(messages, model) {
     const errs = [];
     for (let i = 0; i < DIRECT_UPSTREAMS.length; i++) {
       const base = DIRECT_UPSTREAMS[i];
+      const upModel = (DIRECT_MODEL_MAP[base] && DIRECT_MODEL_MAP[base][model]) || model;
+      const payload = Object.assign({}, DIRECT_PAYLOAD[base] || {}, {
+        model: upModel,
+        messages: messages,
+        stream: false,
+      });
       const controller = new AbortController();
       const timer = setTimeout(function () { controller.abort(); }, 30000);
       try {
         const res = await fetch(directChatUrl(base), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            model: DIRECT_MODEL,
-            messages: messages,
-            stream: false,
-            chat_template_kwargs: { enable_thinking: false },
-          }),
+          body: JSON.stringify(payload),
           signal: controller.signal,
         });
         clearTimeout(timer);
@@ -281,6 +302,12 @@
     // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
     // butuh dua panggilan jadi diberi jendela lebih longgar).
     const timeoutMs = dolaOn ? 75000 : 30000;
+    let fullText;
+    if (useDirect) {
+      // Jalur provider CORS langsung (GitHub Pages tanpa backend). Tidak ada
+      // backend untuk mengontraskan logprobs, jadi DoLa diabaikan di sini.
+      fullText = await directChat(messages, modelId);
+    } else {
     const controller = new AbortController();
     const timer = setTimeout(function () { controller.abort(); },timeoutMs);
     let res;
@@ -293,6 +320,10 @@
       });
     } catch (e) {
       clearTimeout(timer);
+      const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
+      throw new Error(why || 'fetch failed');
+    }
+    clearTimeout(timer);
 
       if (!res.ok) {
         const errText = await res.text().catch(function () { return ''; });
@@ -324,9 +355,10 @@
     // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
 
     // mode non-streaming; baca juga sebagai cadangan bila content kosong..
-    let fullText = c.content || c.reasoning_content || c.reasoning || '';
+    fullText = c.content || c.reasoning_content || c.reasoning || '';
     if (!fullText || !fullText.trim()) {
       throw new Error('upstream error: respons kosong');
+    }
     }
 
     // Simulasikan mengetik agar terasa cepat dan responsif; bila onChunk tidak
@@ -461,17 +493,6 @@
       // sebagai cadangan, agar halaman statis tetap bisa mengobrol.
       const directFirst = isGitHubPages && !override;
 
-      async function runModel(mid) {
-        if (directFirst) {
-          try {
-            return await streamChat(mid, buildThreadHistory(), renderChunk, true);
-          } catch (e) {
-            console.warn('Jalur langsung gagal:', e && e.message);
-          }
-        }
-        return await streamChat(mid, buildThreadHistory(), renderChunk, false);
-      }
-
       let success = false;
       let lastError = null;
 
@@ -507,7 +528,19 @@
           const batch = pendingPool.slice(bi, bi + batchSize);
           setStatus('on', 'mencoba: ' + batch.join(' + '));
           const attempts = batch.map(function (name) {
-            return streamChat(name, buildThreadHistory(), null).then(function (t) { return { name: name, text: t }; }).catch(function (err) {
+            // Jalur langsung (GitHub Pages) mencoba provider CORS lebih dulu
+            // per model, lalu backend sebagai cadangan.
+            const run = async function () {
+              if (directFirst) {
+                try {
+                  return await streamChat(name, buildThreadHistory(), null, true);
+                } catch (e) {
+                  console.warn('Jalur langsung ' + name + ' gagal:', e && e.message);
+                }
+              }
+              return await streamChat(name, buildThreadHistory(), null, false);
+            };
+            return run().then(function (t) { return { name: name, text: t }; }).catch(function (err) {
               console.warn('Model ' + name + ' gagal:', err.message);
               if (!lastError) lastError = err;
               roundErr = err;
