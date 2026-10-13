@@ -436,14 +436,22 @@
       let fullText = '';
       let lastRender = 0;
 
-      const renderChunk = (text) => {
-        fullText = text;
-        const now = Date.now();
-        if (now - lastRender > 50) {
-          lastRender = now;
-          msgEls.inner.innerHTML = decorateText(fullText);
-          scrollDown();
-        }
+      // Setiap model punya token stream sendiri. Saat satu model menang, token
+      // lain dikunci agar chunk lambat dari model yang kalah tidak menimpa
+      // jawaban pemenang (dulu menimpa `fullText` sehingga teks tampil terpotong).
+      let winningToken = null;
+      let streamSeq = 0;
+      const renderFor = function (token) {
+        return function (text) {
+          if (winningToken !== null && winningToken !== token) return;
+          fullText = text;
+          const now = Date.now();
+          if (now - lastRender > 50) {
+            lastRender = now;
+            msgEls.inner.innerHTML = decorateText(fullText);
+            scrollDown();
+          }
+        };
       };
 
       // Daftar model yang akan dicoba. Bila mode "Auto"(semua), semua model
@@ -465,14 +473,20 @@
       const directFirst = isGitHubPages && !override;
 
       async function runModel(mid) {
+        const token = ++streamSeq;
+        const onChunk = renderFor(token);
+        let text = null;
         if (directFirst) {
           try {
-            return await streamChat(mid, buildThreadHistory(), renderChunk, true);
+            text = await streamChat(mid, buildThreadHistory(), onChunk, true);
           } catch (e) {
             console.warn('Jalur langsung gagal:', e && e.message);
           }
         }
-        return await streamChat(mid, buildThreadHistory(), renderChunk, false);
+        if (text === null) {
+          text = await streamChat(mid, buildThreadHistory(), onChunk, false);
+        }
+        return { token: token, text: text };
       }
 
       let success = false;
@@ -510,7 +524,7 @@
           const batch = pendingPool.slice(bi, bi + batchSize);
           setStatus('on', 'mencoba: ' + batch.join(' + '));
           const attempts = batch.map(function (name) {
-            return runModel(name).then(function (t) { return { name: name, text: t }; }).catch(function (err) {
+            return runModel(name).then(function (r) { return { name: name, text: r.text, token: r.token }; }).catch(function (err) {
               console.warn('Model ' + name + ' gagal:', err.message);
               if (!lastError) lastError = err;
               roundErr = err;
@@ -519,8 +533,12 @@
           });
           try {
             const won = await Promise.any(attempts);
+            // Kunci stream ke token pemenang sebelum render akhir, supaya chunk
+            // model yang kalah (masih berjalan di latar) tidak menimpanya.
+            winningToken = won.token;
             fullText = won.text;
-            renderChunk(fullText);
+            msgEls.inner.innerHTML = decorateText(fullText);
+            scrollDown();
             success = true;
           } catch (err) {
             // Promise.any menolak AggregateError bila semua model pada batch gagal..
