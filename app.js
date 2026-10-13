@@ -179,8 +179,11 @@
   const override = new URLSearchParams(window.location.search).get('backend');
   let backendInUse = override || DEFAULT_BACKEND;
   const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
+  // ?direct=1 memaksa pemakaian provider gratis langsung dari browser,
+  // melewati backend proxy (berguna saat backend mati / untuk debugging).
+  const forceDirect = new URLSearchParams(window.location.search).get('direct') === '1';
 
-  const FREE_MODELS = ['qwen3.8-27b', 'gpt-oss-20b', 'qwen3-8b'];
+  const FREE_MODELS = ['Qwen3.8-27B', 'gpt-oss-20b', 'Qwen3-30B'];
   const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
   let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
@@ -298,27 +301,29 @@
   async function streamChat(modelId, messages, onChunk, useDirect) {
     setStatus('on', 'menunggu jawaban...');
 
-    // Batasi lama menunggu upstream agar model yang menggantung tidak
-    // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
-    // butuh dua panggilan jadi diberi jendela lebih longgar).
-    const timeoutMs = dolaOn ? 75000 : 30000;
     let fullText;
     if (useDirect) {
-      // Jalur provider CORS langsung (GitHub Pages tanpa backend). Tidak ada
-      // backend untuk mengontraskan logprobs, jadi DoLa diabaikan di sini.
-      fullText = await directChat(messages, modelId);
+      fullText = await directChat(messages);
     } else {
-    const controller = new AbortController();
-    const timer = setTimeout(function () { controller.abort(); },timeoutMs);
-    let res;
-    try {
-      res = await fetch(api('/api/chat'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
-        signal: controller.signal
-      });
-    } catch (e) {
+      // Batasi lama menunggu upstream agar model yang menggantung tidak
+      // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
+      // butuh dua panggilan jadi diberi jendela lebih longgar).
+      const timeoutMs = dolaOn ? 75000 : 30000;
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, timeoutMs);
+      let res;
+      try {
+        res = await fetch(api('/api/chat'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
+          signal: controller.signal
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
+        throw new Error(why || 'fetch failed');
+      }
       clearTimeout(timer);
       const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
       throw new Error(why || 'fetch failed');
@@ -330,52 +335,126 @@
         throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
       }
 
-    // Upstream kadang membalas header 200 lalu menahan body-nya; AbortController
-    // hanya memutus fase request,, jadi baca body dengan timeout mandiri agar
-    // model yang menggantung tidak membekukan engine selamanya..
-    let data;
-    try {
-      data = await Promise.race([
-        res.json().catch(function () { return null; }),
-        new Promise(function (resolve) {
-          setTimeout(function () { resolve(null); }, 15000);
-        })
-      ]);
-    } catch (e) {
-      throw new Error('upstream timeout: respons tidak selesai');
-    }
-    // Upstream Zen kerap membalas HTTP  200 dengan badan error; anggap sebagai
-    // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
-
-    if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
-      const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
-      throw new Error('upstream error: ' + em);
-    }
-    const c = data.choices[0].message || {};
-    // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
-
-    // mode non-streaming; baca juga sebagai cadangan bila content kosong..
-    fullText = c.content || c.reasoning_content || c.reasoning || '';
-    if (!fullText || !fullText.trim()) {
-      throw new Error('upstream error: respons kosong');
+      // Upstream kadang membalas header 200 lalu menahan body-nya; AbortController
+      // hanya memutus fase request, jadi baca body dengan timeout mandiri agar
+      // model yang menggantung tidak membekukan engine selamanya.
+      let data;
+      try {
+        data = await Promise.race([
+          res.json().catch(function () { return null; }),
+          new Promise(function (resolve) {
+            setTimeout(function () { resolve(null); }, 15000);
+          })
+        ]);
+      } catch (e) {
+        throw new Error('upstream timeout: respons tidak selesai');
+      }
+      // Upstream Zen kerap membalas HTTP 200 dengan badan error; anggap sebagai
+      // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
+      if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
+        const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
+        throw new Error('upstream error: ' + em);
+      }
+      const c = data.choices[0].message || {};
+      // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
+      // mode non-streaming; baca juga sebagai cadangan bila content kosong.
+      fullText = c.content || c.reasoning_content || c.reasoning || '';
+      if (!fullText || !fullText.trim()) {
+        throw new Error('upstream error: respons kosong');
+      }
     }
     }
 
     // Simulasikan mengetik agar terasa cepat dan responsif; bila onChunk tidak
     // diberikan (mode paralel), langsung kembalikan teks penuh agar pemenang
-
     // "tercepat" tidak tertunda oleh efek ketik buatan.
-
-
-    const finalText = fullText;
     if (onChunk) {
-      const words = finalText.split(' ');
+      const words = fullText.split(' ');
       for (let i = 0; i < words.length; i++) {
         onChunk(words.slice(0, i + 1).join(' '));
         await new Promise(r => setTimeout(r, 20)); // jeda 20ms
       }
     }
-    return finalText;
+    return fullText;
+  }
+
+  // === Provider gratis langsung (cadangan bila backend proxy mati) ===
+  // Semua endpoint di bawah mengizinkan CORS, jadi bisa dipanggil langsung
+  // dari browser GitHub Pages tanpa backend. Dipakai otomatis bila fetch ke
+  // /api/chat gagal (mis. backend Render sudah tidak ada).
+  const DIRECT_PROVIDERS = [
+    {
+      label: 'uncloseai-hermes',
+      url: 'https://hermes.ai.unturf.com/v1/chat/completions',
+      model: 'turboderp/Qwen3.8-27B-exl3',
+      extra: { chat_template_kwargs: { enable_thinking: false } },
+    },
+    {
+      label: 'uncloseai-qwen',
+      url: 'https://qwen.ai.unturf.com/v1/chat/completions',
+      model: 'turboderp/Qwen3.8-27B-exl3',
+      extra: { chat_template_kwargs: { enable_thinking: false } },
+    },
+    {
+      label: 'pollinations',
+      url: 'https://text.pollinations.ai/openai',
+      model: 'openai',
+    },
+    {
+      label: 'free.ai',
+      url: 'https://api.free.ai/v1/chat/completions',
+      model: 'qwen7b',
+    },
+  ];
+
+  async function directChat(messages, onChunk) {
+    let lastErr = null;
+    for (let i = 0; i < DIRECT_PROVIDERS.length; i++) {
+      const p = DIRECT_PROVIDERS[i];
+      const payload = Object.assign({ model: p.model, messages: messages, stream: false, max_tokens: 1024 }, p.extra || {});
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, 30000);
+      try {
+        const res = await fetch(p.url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) { lastErr = new Error('HTTP ' + res.status + ' @ ' + p.label); continue; }
+        const data = await res.json().catch(function () { return null; });
+        const c = data && data.choices && data.choices[0] && data.choices[0].message;
+        const fullText = c && (c.content || c.reasoning_content || c.reasoning);
+        if (!fullText || !fullText.trim()) { lastErr = new Error('respons kosong @ ' + p.label); continue; }
+        if (onChunk) {
+          const words = fullText.split(' ');
+          for (let w = 0; w < words.length; w++) {
+            onChunk(words.slice(0, w + 1).join(' '));
+            await new Promise(function (r) { setTimeout(r, 20); });
+          }
+        }
+        return fullText;
+      } catch (e) {
+        clearTimeout(timer);
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('semua provider langsung gagal');
+  }
+
+  // streamChat = coba backend proxy dulu; bila gagal dengan cara apa pun
+  // (backend mati, CORS, atau upstream proxy error), jatuh ke provider gratis
+  // langsung dari browser agar user selalu dapat jawaban.
+  async function streamChat(modelId, messages, onChunk) {
+    if (forceDirect) return await directChat(messages, onChunk);
+    try {
+      return await backendStreamChat(modelId, messages, onChunk);
+    } catch (e) {
+      console.warn('Backend gagal, beralih ke provider langsung:', (e && e.message) || e);
+      setStatus('on', 'backend tak tersedia, pakai provider langsung…');
+      return await directChat(messages, onChunk);
+    }
   }
 
   function buildThreadHistory() {
@@ -465,14 +544,22 @@
       let fullText = '';
       let lastRender = 0;
 
-      const renderChunk = (text) => {
-        fullText = text;
-        const now = Date.now();
-        if (now - lastRender > 50) {
-          lastRender = now;
-          msgEls.inner.innerHTML = decorateText(fullText);
-          scrollDown();
-        }
+      // Setiap model punya token stream sendiri. Saat satu model menang, token
+      // lain dikunci agar chunk lambat dari model yang kalah tidak menimpa
+      // jawaban pemenang (dulu menimpa `fullText` sehingga teks tampil terpotong).
+      let winningToken = null;
+      let streamSeq = 0;
+      const renderFor = function (token) {
+        return function (text) {
+          if (winningToken !== null && winningToken !== token) return;
+          fullText = text;
+          const now = Date.now();
+          if (now - lastRender > 50) {
+            lastRender = now;
+            msgEls.inner.innerHTML = decorateText(fullText);
+            scrollDown();
+          }
+        };
       };
 
       // Daftar model yang akan dicoba. Bila mode "Auto"(semua), semua model
@@ -492,6 +579,23 @@
       // (404/CORS). Jalankan provider CORS langsung lebih dulu, lalu backend
       // sebagai cadangan, agar halaman statis tetap bisa mengobrol.
       const directFirst = isGitHubPages && !override;
+
+      async function runModel(mid) {
+        const token = ++streamSeq;
+        const onChunk = renderFor(token);
+        let text = null;
+        if (directFirst) {
+          try {
+            text = await streamChat(mid, buildThreadHistory(), onChunk, true);
+          } catch (e) {
+            console.warn('Jalur langsung gagal:', e && e.message);
+          }
+        }
+        if (text === null) {
+          text = await streamChat(mid, buildThreadHistory(), onChunk, false);
+        }
+        return { token: token, text: text };
+      }
 
       let success = false;
       let lastError = null;
@@ -528,19 +632,7 @@
           const batch = pendingPool.slice(bi, bi + batchSize);
           setStatus('on', 'mencoba: ' + batch.join(' + '));
           const attempts = batch.map(function (name) {
-            // Jalur langsung (GitHub Pages) mencoba provider CORS lebih dulu
-            // per model, lalu backend sebagai cadangan.
-            const run = async function () {
-              if (directFirst) {
-                try {
-                  return await streamChat(name, buildThreadHistory(), null, true);
-                } catch (e) {
-                  console.warn('Jalur langsung ' + name + ' gagal:', e && e.message);
-                }
-              }
-              return await streamChat(name, buildThreadHistory(), null, false);
-            };
-            return run().then(function (t) { return { name: name, text: t }; }).catch(function (err) {
+            return runModel(name).then(function (r) { return { name: name, text: r.text, token: r.token }; }).catch(function (err) {
               console.warn('Model ' + name + ' gagal:', err.message);
               if (!lastError) lastError = err;
               roundErr = err;
@@ -549,8 +641,12 @@
           });
           try {
             const won = await Promise.any(attempts);
+            // Kunci stream ke token pemenang sebelum render akhir, supaya chunk
+            // model yang kalah (masih berjalan di latar) tidak menimpanya.
+            winningToken = won.token;
             fullText = won.text;
-            renderChunk(fullText);
+            msgEls.inner.innerHTML = decorateText(fullText);
+            scrollDown();
             success = true;
           } catch (err) {
             // Promise.any menolak AggregateError bila semua model pada batch gagal..

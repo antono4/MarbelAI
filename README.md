@@ -50,9 +50,11 @@ Marbel AI adalah aplikasi chat AI ringan yang terdiri dari dua bagian:
    ke endpoint **OpenAI-compatible**. Backend inilah yang menyimpan kunci API
    dan menangani fallback antar-provider.
 
-Karena semua lalu lintas model lewat satu proxy, frontend tidak perlu tahu
-detail provider mana yang sedang dipakai. Ganti upstream cukup dengan mengubah
-satu variabel lingkungan.
+Ada juga **jalur langsung dari browser** ke provider yang mengizinkan CORS.
+Jalur ini dipakai lebih dulu saat halaman dibuka dari GitHub Pages tanpa
+`?backend=`, sehingga halaman statis tetap bisa mengobrol meski backend
+terpisah sedang tidak aktif. Detailnya di
+[Cara Kerja Singkat](#cara-kerja-singkat).
 
 > **Tanpa dependency npm.** Seluruh backend memakai modul bawaan Node.js
 > (`http`, `https`, `fs`, `path`). `npm install` tidak diperlukan untuk menjalankan
@@ -75,23 +77,24 @@ blok kode yang otomatis diformat.
 **Pemilih model** — pilih `Auto Model (Tercepat)` untuk mode ensemble, atau kunci
 satu model tertentu.
 
-![Pemilih model](docs/screenshots/06-model-dropdown.png)
+![Pemilih model](docs/screenshots/05-model-dropdown.png)
 
 **Area chat lebar** — sidebar bisa disembunyikan agar area percakapan lebih luas.
 
-![Sidebar disembunyikan](docs/screenshots/05-sidebar-collapsed.png)
+![Sidebar disembunyikan](docs/screenshots/06-sidebar-collapsed.png)
 
-**Empat tema bawaan** — `green` (default), `ocean`, `sunset`, dan `light`.
+**Empat tema bawaan** — `green` (default), `ocean`, `sunset`, dan `light`. Pemilih
+tema ada di kaki sidebar (`.sidebar-foot`), bersebelahan dengan indikator status.
 
-| Malam Hijau (default) | Laut Biru | Terang |
-|:---:|:---:|:---:|
-| ![Tema default](docs/screenshots/01-welcome.png) | ![Tema ocean](docs/screenshots/02-theme-ocean.png) | ![Tema light](docs/screenshots/03-theme-light.png) |
+| Malam Hijau (default) | Laut Biru | Senja Ungu | Terang |
+|:---:|:---:|:---:|:---:|
+| ![Tema default](docs/screenshots/01-welcome.png) | ![Tema ocean](docs/screenshots/02-theme-ocean.png) | ![Tema sunset](docs/screenshots/07-theme-sunset.png) | ![Tema light](docs/screenshots/03-theme-light.png) |
 
 **Tampilan ponsel** — sidebar berubah menjadi *drawer* dengan lapisan *scrim*.
 
 | Layar sambutan | Sidebar terbuka |
 |:---:|:---:|
-| ![Mobile sambutan](docs/screenshots/07-mobile-welcome.png) | ![Mobile sidebar](docs/screenshots/08-mobile-sidebar.png) |
+| ![Mobile sambutan](docs/screenshots/08-mobile-welcome.png) | ![Mobile sidebar](docs/screenshots/09-mobile-sidebar.png) |
 
 ---
 
@@ -100,6 +103,8 @@ satu model tertentu.
 - **Ensemble multi-model paralel** — beberapa model gratis dijalankan sekaligus
   dalam batch kecil (maks 2 per batch), lalu jawaban **tercepat yang sukses**
   yang dipakai. Model yang lambat tidak menahan jawaban.
+- **Dua jalur ke model** — provider CORS langsung dari browser (untuk GitHub
+  Pages) atau proxy backend. Frontend memilih otomatis.
 - **Fallback berlapis** — bila provider utama gagal (4xx/5xx, timeout, atau
   balasan "HTTP 200 berisi error"), permintaan dicoba ulang ke provider cadangan
   (Z.ai/GLM bila tersedia), lalu ke model berikutnya.
@@ -119,33 +124,64 @@ satu model tertentu.
 
 ## Cara Kerja Singkat
 
+Marbel AI punya **dua jalur** menuju model. Frontend memilih jalur secara otomatis.
+
 ```
-┌────────────────────┐        POST /api/chat         ┌─────────────────────────┐
-│  Frontend (app.js) │ ────────────────────────────► │  Backend (server.js)    │
-│  index.html + CSS  │                               │  - file statis          │
-│  GitHub Pages /    │ ◄──────────────────────────── │  - proxy + fallback     │
-│  file lokal        │        JSON jawaban           │  - jalur DoLa           │
-└────────────────────┘                               └───────────┬─────────────┘
-                                                                 │ OpenAI-compatible
-                                                                 ▼
-                                                     ┌─────────────────────────┐
-                                                     │ UPSTREAM (uncloseai +   │
-                                                     │ pollinations + Free.ai) │
-                                                     │ + ZAI_UPSTREAM (GLM)    │
-                                                     └─────────────────────────┘
+                        ┌──────────────────────────────────────┐
+                        │  Frontend (app.js)                   │
+                        │  index.html + styles.css             │
+                        └───────────────┬──────────────────────┘
+                                        │
+              ┌─────────────────────────┴─────────────────────────┐
+              │                                                   │
+   Jalur A: langsung (CORS)                        Jalur B: lewat backend
+   dipakai lebih dulu di GitHub Pages              dipakai saat ?backend= atau
+   tanpa ?backend=                                 dibuka dari server sendiri
+              │                                                   │
+              ▼                                                   ▼
+   ┌────────────────────────┐                     ┌───────────────────────────┐
+   │ hermes.ai.unturf.com   │                     │  Backend (server.js)      │
+   │ qwen.ai.unturf.com     │                     │  - file statis            │
+   │ (Access-Control-       │                     │  - proxy + fallback       │
+   │  Allow-Origin: *)      │                     │  - jalur DoLa             │
+   └────────────────────────┘                     └─────────────┬─────────────┘
+                                                                │ OpenAI-compatible
+                                                                ▼
+                                                  ┌───────────────────────────┐
+                                                  │ UPSTREAM (Zen)            │
+                                                  │ + ZAI_UPSTREAM (GLM)      │
+                                                  └───────────────────────────┘
 ```
+
+**Kenapa ada jalur langsung?** Backend default (`marbel-ai.onrender.com`) adalah
+layanan gratis yang bisa tidur atau tidak lagi tersedia. Tanpa jalur langsung,
+halaman GitHub Pages akan selalu gagal mengobrol. Provider di jalur langsung
+mengirim header `Access-Control-Allow-Origin: *`, jadi browser boleh memanggilnya
+langsung tanpa perantara.
 
 **Alur satu pesan:**
 
-1. `app.js` mengirim `{ model, messages, stream: false, dola }` ke `POST /api/chat`.
-2. Di mode **Auto**, frontend memanggil beberapa model **paralel** dan memakai
-   hasil pertama yang sukses (`Promise.any`).
-3. `server.js` meneruskan permintaan ke `UPSTREAM`. Bila gagal dan `ZAI_API_KEY`
-   tersedia, permintaan dicoba ke `ZAI_UPSTREAM`.
-4. Jawaban dibaca dari `message.content`; bila kosong, dicoba
+1. `app.js` menyusun daftar model yang akan dicoba. Bila opsi **Auto** dipilih,
+   semua model gratis masuk daftar; bila satu model dipilih, model itu ditaruh
+   paling depan lalu cadangan menyusul.
+2. Untuk setiap model, `streamChat()` memilih jalur:
+   - `useDirect = true` → `directChat()` memanggil provider CORS langsung,
+     mencoba `hermes` lalu `qwen` secara berurutan (timeout 30 detik per provider).
+   - `useDirect = false` → `POST /api/chat` ke backend, yang meneruskan ke
+     `UPSTREAM` dan beralih ke `ZAI_UPSTREAM` bila `ZAI_API_KEY` tersedia.
+3. Di mode **Auto**, model dijalankan **paralel dalam batch kecil** (maks 2 per
+   batch). `Promise.any` mengambil jawaban pertama yang sukses; model yang
+   menggantung tidak menahan pemenang.
+4. Bila satu gelombang penuh gagal, permintaan diulang dengan **backoff
+   eksponensial berjitter** (~1,2 detik lalu ~2 detik), maksimal 2 gelombang.
+5. Jawaban dibaca dari `message.content`; bila kosong, dicoba
    `message.reasoning_content` lalu `message.reasoning` (sebagian model menaruh
    jawabannya di kolom *reasoning* saat non-streaming).
-5. Frontend merender jawaban dan menyimpannya ke riwayat thread.
+6. Frontend merender jawaban dan menyimpannya ke riwayat thread.
+
+> **Catatan:** model GLM (`glm-*`) hanya tersedia lewat Jalur B, karena butuh
+> `ZAI_API_KEY` di backend. Di Jalur A semua nama model dipetakan ke satu model
+> `turboderp/Qwen3.8-27B-exl3` yang dilayani provider langsung.
 
 ---
 
@@ -195,9 +231,11 @@ provider gratis tanpa API key dari no-cost-ai. Opsional **Z.ai** untuk model GLM
 > `ZAI_API_KEY`. Frontend memeriksa `GET /api/status` untuk menentukan status
 > kunci ini, sehingga tidak ada permintaan yang dibuang sia-sia.
 
-Pada halaman statis GitHub Pages (tanpa backend), UI memanggil provider CORS
-langsung dari browser: `hermes.ai.unturf.com` → `qwen.ai.unturf.com` →
-`text.pollinations.ai` → `api.free.ai`.
+**Jalur langsung (GitHub Pages).** Provider CORS langsung hanya melayani satu
+model, yaitu `turboderp/Qwen3.8-27B-exl3`. Karena itu semua nama model di
+dropdown dipetakan ke model tersebut saat Jalur A dipakai. Ini disengaja:
+tujuannya agar halaman statis tetap bisa mengobrol tanpa backend, bukan agar
+setiap nama model benar-benar berbeda.
 
 ---
 
@@ -332,13 +370,18 @@ Buka `http://localhost:10000`.
 | **GitHub Pages** | Frontend statis langsung jalan dari branch `master` (folder `/`). Backend default `https://marbel-ai.onrender.com`, bisa ditimpa dengan query `?backend=URL`. |
 | **Docker** | Lihat bagian [Docker](#docker) di atas. |
 
-**Catatan GitHub Pages.** Saat frontend dibuka dari `github.io`, `app.js` otomatis
-mengarahkan permintaan API ke backend (default Render) dan menyediakan fallback
-bila backend tersebut tidak merespons. Untuk backend sendiri, cukup buka:
+**Catatan GitHub Pages.** Saat frontend dibuka dari `github.io` **tanpa**
+`?backend=`, `app.js` memakai **jalur langsung** ke provider CORS
+(`hermes.ai.unturf.com`, lalu `qwen.ai.unturf.com`) lebih dulu, sehingga halaman
+tetap bisa mengobrol walau backend Render tidak aktif. Untuk memaksa lewat
+backend sendiri, cukup buka:
 
 ```
 https://antono4.github.io/MarbelAI/?backend=https://backend-anda.example.com
 ```
+
+Bila `?backend=` diberikan, jalur langsung dilewati dan semua permintaan
+diarahkan ke backend tersebut.
 
 ---
 
@@ -364,7 +407,7 @@ Tes memakai `node:test` bawaan Node.js (tanpa framework tambahan):
 MarbelAI/
 ├── server.js              Backend: server statis + proxy OpenAI-compatible + fallback
 ├── dola.js                Inti DoLa (logprobs → kontras → dekode)
-├── app.js                 Frontend: chat, ensemble paralel, retry, tema, thread
+├── app.js                 Frontend: chat, ensemble paralel, jalur langsung CORS, tema, thread
 ├── index.html             Markup UI
 ├── styles.css             Tema dan gaya (green, ocean, sunset, light)
 ├── test/
@@ -386,11 +429,12 @@ MarbelAI/
 
 | Gejala | Penyebab umum | Solusi |
 |---|---|---|
+| Halaman tampak kosong / tombol tema tidak berfungsi | `app.js` gagal di-parse (kesalahan sintaks) | Cek konsol browser, lalu jalankan `node -c app.js` untuk memvalidasi |
 | Status "tak tersedia" dan daftar model kosong | Backend tidak bisa menghubungi upstream, atau `UPSTREAM` salah | Periksa nilai `UPSTREAM` dan koneksi keluar; aktifkan `LOG_CHAT=1` untuk melihat request |
 | Semua model gagal, muncul "Terjadi kesalahan saat menghubungi server" | Provider gratis sedang sibuk (rate-limit/503) | Tunggu sebentar lalu kirim ulang; retry + backoff sudah berjalan otomatis |
+| Chat gagal terus di GitHub Pages | Provider CORS langsung sedang penuh **dan** backend tidak aktif | Buka dengan `?backend=URL` yang benar, atau coba lagi beberapa saat |
 | Model `glm-*` terkunci di sidebar | `ZAI_API_KEY` belum diisi di backend | Set `ZAI_API_KEY` (dan opsional `ZAI_UPSTREAM`) lalu restart |
 | Jawaban DoLa sama dengan jawaban biasa | Provider tidak mengirim `logprobs`, jadi fallback ke dekode biasa | Pastikan `DOLA_MATURE_MODEL`/`DOLA_PREMATURE_MODEL` mendukung `logprobs` |
-| Frontend GitHub Pages tidak menemukan backend | Backend default tidak merespons | Buka dengan `?backend=URL` yang benar, atau pastikan backend Render aktif |
 | Jawaban muncul di kolom *reasoning*, bukan *content* | Format balasan provider berbeda | Sudah ditangani otomatis (`content` → `reasoning_content` → `reasoning`) |
 
 ---

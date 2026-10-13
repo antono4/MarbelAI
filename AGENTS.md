@@ -1,7 +1,19 @@
 # Marbel AI — Catatan Repo
 
-## Cara menjalankan
+## Backend proxy sudah mati → fallback provider langsung
 
+- **`marbel-ai.onrender.com` sudah tidak ada** (Render membalas `404` dengan header `x-render-routing: no-server`). Di GitHub Pages, UI lama menunjuk ke sana sehingga muncul **"Failed to fetch"**.
+- Perbaikan: `app.js` sekarang punya **fallback provider gratis langsung dari browser** (`directChat`) via endpoint yang mendukung CORS:
+  - `hermes.ai.unturf.com` (`turboderp/Qwen3.8-27B-exl3`)
+  - `qwen.ai.unturf.com` (`turboderp/Qwen3.8-27B-exl3`)
+  - `text.pollinations.ai/openai` (`openai`)
+  - `api.free.ai/v1/chat/completions` (`qwen7b`)
+- `streamChat` mencoba backend proxy dulu; **bila gagal dengan cara apa pun** (backend mati, CORS, upstream error) otomatis beralih ke `directChat`. Jadi UI tetap jalan tanpa backend.
+- `?direct=1` memaksa mode provider langsung (untuk debugging / saat backend mati).
+- Di GitHub Pages, `loadModels()` langsung memakai `FREE_MODELS` (tak menunggu fetch backend yang pasti gagal).
+- **Catatan:** sistem prompt tetap dikirim sebagai pesan `system` (bukan field `system` di payload).
+
+## Cara menjalankan
 ```bash
 PORT=12000 node server.js
 ```
@@ -10,18 +22,16 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 
 
 
-## Model gratis — disamakan dengan MarbelAIv2.1
+## Model gratis (per 2026-10)
 
-`FREE_MODELS` (app.js) & `MODELS_LIST`/model UI:
+Upstream Zen sudah dibuang (free tier-nya menolak di luar klien OpenCode). `FREE_MODELS` di `app.js` kini menunjuk provider CORS-langsung:
 
-- `qwen3.8-27b` (uncloseai — default)
+- `Qwen3.8-27B` (uncloseai, default) — `turboderp/Qwen3.8-27B-exl3`
 - `gpt-oss-20b` (pollinations)
-- `qwen3-8b` (Free.ai)
+- `Qwen3-30B` (Free.ai)
 
-Provider yang dipakai (sumber no-cost-ai, tanpa API key):
-- **uncloseai** (`hermes.ai.unturf.com`, `qwen.ai.unturf.com`) — CORS `*`, hanya melayani `turboderp/Qwen3.8-27B-exl3`.
-- **pollinations** (`text.pollinations.ai`) — CORS `*`, alias model `openai`.
-- **Free.ai** (`api.free.ai`) — model open-weight gratis.
+## Pola ensemble
+- Mode "Semua Model": jalankan model-model gratis dalam batch paralel; jawaban tercepat yang sukses dipakai.
 
 Model lama Zen (`ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `laguna-s-2.1-free`, `nemotron-3.5-lightning-free`) **sudah dibuang** agar selaras dengan v2.1. Untuk chat via halaman statis GitHub Pages, `app.js` memanggil provider ini langsung dari browser (failover berurutan); backend dipakai sebagai cadangan.
 
@@ -79,6 +89,13 @@ Model lama Zen (`ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `laguna-s-2.1-free`
 - `loadModels()` tidak lagi menandai "gagal" saat proxy tidak terjangkau — daftar model statis tetap ditampilkan dan status "terhubung", karena chat berjalan lewat jalur langsung.
 - Pemilih tema (`.theme-switch`) dipindah ke `.sidebar-foot` bersama status; sebelumnya berdesakan di `.sidebar-head` sehingga `.brand-name`/`.brand-tag` terpotong.
 
+### Regresi sintaks (sudah diperbaiki)
+
+- Patch jalur langsung sempat menempatkan blok `if (!res.ok)` **di dalam** `catch (e)` pada `streamChat`, dan menghapus penutup `catch` beserta `clearTimeout(timer)`. Akibatnya `app.js` gagal di-parse (`Unexpected token ')'` di akhir IIFE) dan **seluruh halaman mati**: tidak ada listener terpasang, tombol tema tidak bereaksi, chat tidak jalan.
+- Selain itu `runModel()` (yang memilih jalur langsung vs backend) terdefinisi tetapi **tidak pernah dipanggil** — loop batch masih memanggil `streamChat(...)` tanpa argumen `useDirect`, sehingga fitur jalur langsung tidak aktif sama sekali.
+- Perbaikan: `streamChat` diberi cabang `useDirect` → `directChat(messages)`, `clearTimeout(timer)` dikembalikan, dan loop batch memanggil `runModel(name)`.
+- **Selalu jalankan `node -c app.js` sebelum commit** — `npm test` hanya menguji `dola.js` dan `server.js`, jadi kesalahan sintaks di `app.js` tidak tertangkap.
+
 ## Catatan penting
 
 
@@ -96,3 +113,10 @@ Model lama Zen (`ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `laguna-s-2.1-free`
 - File sumber memakai gaya penulisan tidak biasa(koma-titik tanpa spasi konsisten,. `node -c` valid meskipun tampak aneh; jangan"merapikan" tanpa tes..
 - `server.js` punya timeout upstream(30s chat,, 15s models) dan tidak kirim header `Authorization` kosong;; `LOG_CHAT=1` mengaktifkan log request chat di konsol backend..
 - Frontend membaca jawaban dari `message.content`, lalu fallback `message.reasoning_content`/`message.reasoning`(beberapa model seperti `ling` menaruh jawaban di kolom reasoning saat non-streaming).. Sesuaikan bila upstream mengubah format jawaban..
+
+### Regresi jawaban terpotong di mode paralel (sudah diperbaiki)
+
+- **Gejala:** jawaban AI tampil terpotong (mis. `"Nama saya Marbel AI. Hasil dari 2+2"` padahal upstream mengirim `"...adalah 4."`), dan gejalanya hilang-timbul tergantung model mana yang menang.
+- **Sebab:** semua model pada batch berbagi satu `renderChunk`. Efek ketik `streamChat` berjalan per-kata (20 ms/kata) dan tetap lanjut di latar setelah `Promise.any` selesai. Saat pemenang selesai, `streamChat`-nya menulis `fullText = <teks lengkap>` lalu mengembalikan; tetapi model yang **kalah** masih dalam loop ketiknya dan menimpa `fullText` dengan potongan yang lebih pendek. `success = true` membuat loop batch berikutnya dilewati, jadi `fullText` tetap versi potongan itu saat render final.
+- **Perbaikan:** setiap pemanggilan model kini punya token sendiri (`renderFor(token)`), dan `winningToken` dikunci ke pemenang **sebelum** render final. Chunk dari model lain diabaikan sehingga jawaban pemenang tidak bisa ditimpa.
+- `npm test` tidak menguji `app.js`; uji ini hanya bisa ditangkap lewat browser. Verifikasi cepat: kirim pesan dan pastikan teks tampil **sama persis** dengan yang dikembalikan upstream.
