@@ -277,21 +277,29 @@
   async function streamChat(modelId, messages, onChunk, useDirect) {
     setStatus('on', 'menunggu jawaban...');
 
-    // Batasi lama menunggu upstream agar model yang menggantung tidak
-    // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
-    // butuh dua panggilan jadi diberi jendela lebih longgar).
-    const timeoutMs = dolaOn ? 75000 : 30000;
-    const controller = new AbortController();
-    const timer = setTimeout(function () { controller.abort(); },timeoutMs);
-    let res;
-    try {
-      res = await fetch(api('/api/chat'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
-        signal: controller.signal
-      });
-    } catch (e) {
+    let fullText;
+    if (useDirect) {
+      fullText = await directChat(messages);
+    } else {
+      // Batasi lama menunggu upstream agar model yang menggantung tidak
+      // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
+      // butuh dua panggilan jadi diberi jendela lebih longgar).
+      const timeoutMs = dolaOn ? 75000 : 30000;
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, timeoutMs);
+      let res;
+      try {
+        res = await fetch(api('/api/chat'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
+          signal: controller.signal
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
+        throw new Error(why || 'fetch failed');
+      }
       clearTimeout(timer);
 
       if (!res.ok) {
@@ -299,51 +307,46 @@
         throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
       }
 
-    // Upstream kadang membalas header 200 lalu menahan body-nya; AbortController
-    // hanya memutus fase request,, jadi baca body dengan timeout mandiri agar
-    // model yang menggantung tidak membekukan engine selamanya..
-    let data;
-    try {
-      data = await Promise.race([
-        res.json().catch(function () { return null; }),
-        new Promise(function (resolve) {
-          setTimeout(function () { resolve(null); }, 15000);
-        })
-      ]);
-    } catch (e) {
-      throw new Error('upstream timeout: respons tidak selesai');
-    }
-    // Upstream Zen kerap membalas HTTP  200 dengan badan error; anggap sebagai
-    // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
-
-    if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
-      const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
-      throw new Error('upstream error: ' + em);
-    }
-    const c = data.choices[0].message || {};
-    // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
-
-    // mode non-streaming; baca juga sebagai cadangan bila content kosong..
-    let fullText = c.content || c.reasoning_content || c.reasoning || '';
-    if (!fullText || !fullText.trim()) {
-      throw new Error('upstream error: respons kosong');
+      // Upstream kadang membalas header 200 lalu menahan body-nya; AbortController
+      // hanya memutus fase request, jadi baca body dengan timeout mandiri agar
+      // model yang menggantung tidak membekukan engine selamanya.
+      let data;
+      try {
+        data = await Promise.race([
+          res.json().catch(function () { return null; }),
+          new Promise(function (resolve) {
+            setTimeout(function () { resolve(null); }, 15000);
+          })
+        ]);
+      } catch (e) {
+        throw new Error('upstream timeout: respons tidak selesai');
+      }
+      // Upstream Zen kerap membalas HTTP 200 dengan badan error; anggap sebagai
+      // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
+      if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
+        const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
+        throw new Error('upstream error: ' + em);
+      }
+      const c = data.choices[0].message || {};
+      // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
+      // mode non-streaming; baca juga sebagai cadangan bila content kosong.
+      fullText = c.content || c.reasoning_content || c.reasoning || '';
+      if (!fullText || !fullText.trim()) {
+        throw new Error('upstream error: respons kosong');
+      }
     }
 
     // Simulasikan mengetik agar terasa cepat dan responsif; bila onChunk tidak
     // diberikan (mode paralel), langsung kembalikan teks penuh agar pemenang
-
     // "tercepat" tidak tertunda oleh efek ketik buatan.
-
-
-    const finalText = fullText;
     if (onChunk) {
-      const words = finalText.split(' ');
+      const words = fullText.split(' ');
       for (let i = 0; i < words.length; i++) {
         onChunk(words.slice(0, i + 1).join(' '));
         await new Promise(r => setTimeout(r, 20)); // jeda 20ms
       }
     }
-    return finalText;
+    return fullText;
   }
 
   function buildThreadHistory() {
@@ -507,7 +510,7 @@
           const batch = pendingPool.slice(bi, bi + batchSize);
           setStatus('on', 'mencoba: ' + batch.join(' + '));
           const attempts = batch.map(function (name) {
-            return streamChat(name, buildThreadHistory(), null).then(function (t) { return { name: name, text: t }; }).catch(function (err) {
+            return runModel(name).then(function (t) { return { name: name, text: t }; }).catch(function (err) {
               console.warn('Model ' + name + ' gagal:', err.message);
               if (!lastError) lastError = err;
               roundErr = err;
