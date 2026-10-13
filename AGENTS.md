@@ -76,6 +76,22 @@ Upstream Zen sudah dibuang (free tier-nya menolak di luar klien OpenCode). `FREE
 - Strip saran `#suggestions.track` beranimasi `roll` 46s; `app.js` menggandakan kartu secara otomatis agar loop mulus (tanpa perlu duplikat di markup).
 - Kartu saran memakai `data-prompt`; `app.js` mengirim teksnya lewat `onSend`.
 
+## GitHub Pages tanpa backend (perbaikan penting)
+
+- Proxy `https://marbel-ai.onrender.com` **sudah mati** (Render membalas 404 `no-server` tanpa header CORS), jadi jalur backend tidak bisa dipakai dari halaman statis.
+- Karena itu `app.js` kini punya **jalur provider CORS langsung** (`DIRECT_UPSTREAMS`: `hermes.ai.unturf.com`, `qwen.ai.unturf.com`, model `turboderp/Qwen3.8-27B-exl3`) yang dipanggil dari browser dengan `Access-Control-Allow-Origin: *`.
+- Di GitHub Pages tanpa `?backend=`, `onSend()` menjalankan **jalur langsung lebih dulu** (`directFirst`), lalu backend sebagai cadangan. Parameter `?backend=URL` tetap memaksa pemakaian proxy sendiri.
+- Nama model UI (Zen/GLM) hanya label; jalur langsung selalu memakai satu model uncloseai. Ini disengaja agar halaman statis tetap berfungsi 24/7.
+- `loadModels()` tidak lagi menandai "gagal" saat proxy tidak terjangkau — daftar model statis tetap ditampilkan dan status "terhubung", karena chat berjalan lewat jalur langsung.
+- Pemilih tema (`.theme-switch`) dipindah ke `.sidebar-foot` bersama status; sebelumnya berdesakan di `.sidebar-head` sehingga `.brand-name`/`.brand-tag` terpotong.
+
+### Regresi sintaks (sudah diperbaiki)
+
+- Patch jalur langsung sempat menempatkan blok `if (!res.ok)` **di dalam** `catch (e)` pada `streamChat`, dan menghapus penutup `catch` beserta `clearTimeout(timer)`. Akibatnya `app.js` gagal di-parse (`Unexpected token ')'` di akhir IIFE) dan **seluruh halaman mati**: tidak ada listener terpasang, tombol tema tidak bereaksi, chat tidak jalan.
+- Selain itu `runModel()` (yang memilih jalur langsung vs backend) terdefinisi tetapi **tidak pernah dipanggil** — loop batch masih memanggil `streamChat(...)` tanpa argumen `useDirect`, sehingga fitur jalur langsung tidak aktif sama sekali.
+- Perbaikan: `streamChat` diberi cabang `useDirect` → `directChat(messages)`, `clearTimeout(timer)` dikembalikan, dan loop batch memanggil `runModel(name)`.
+- **Selalu jalankan `node -c app.js` sebelum commit** — `npm test` hanya menguji `dola.js` dan `server.js`, jadi kesalahan sintaks di `app.js` tidak tertangkap.
+
 ## Catatan penting
 
 
@@ -93,3 +109,10 @@ Upstream Zen sudah dibuang (free tier-nya menolak di luar klien OpenCode). `FREE
 - File sumber memakai gaya penulisan tidak biasa(koma-titik tanpa spasi konsisten,. `node -c` valid meskipun tampak aneh; jangan"merapikan" tanpa tes..
 - `server.js` punya timeout upstream(30s chat,, 15s models) dan tidak kirim header `Authorization` kosong;; `LOG_CHAT=1` mengaktifkan log request chat di konsol backend..
 - Frontend membaca jawaban dari `message.content`, lalu fallback `message.reasoning_content`/`message.reasoning`(beberapa model seperti `ling` menaruh jawaban di kolom reasoning saat non-streaming).. Sesuaikan bila upstream mengubah format jawaban..
+
+### Regresi jawaban terpotong di mode paralel (sudah diperbaiki)
+
+- **Gejala:** jawaban AI tampil terpotong (mis. `"Nama saya Marbel AI. Hasil dari 2+2"` padahal upstream mengirim `"...adalah 4."`), dan gejalanya hilang-timbul tergantung model mana yang menang.
+- **Sebab:** semua model pada batch berbagi satu `renderChunk`. Efek ketik `streamChat` berjalan per-kata (20 ms/kata) dan tetap lanjut di latar setelah `Promise.any` selesai. Saat pemenang selesai, `streamChat`-nya menulis `fullText = <teks lengkap>` lalu mengembalikan; tetapi model yang **kalah** masih dalam loop ketiknya dan menimpa `fullText` dengan potongan yang lebih pendek. `success = true` membuat loop batch berikutnya dilewati, jadi `fullText` tetap versi potongan itu saat render final.
+- **Perbaikan:** setiap pemanggilan model kini punya token sendiri (`renderFor(token)`), dan `winningToken` dikunci ke pemenang **sebelum** render final. Chunk dari model lain diabaikan sehingga jawaban pemenang tidak bisa ditimpa.
+- `npm test` tidak menguji `app.js`; uji ini hanya bisa ditangkap lewat browser. Verifikasi cepat: kirim pesan dan pastikan teks tampil **sama persis** dengan yang dikembalikan upstream.

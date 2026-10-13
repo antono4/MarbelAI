@@ -187,6 +187,57 @@
   const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
   let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
+  // Provider CORS langsung: dipakai sebagai cadangan saat proxy backend tidak
+  // tersedia (mis. service Render tidur/404). Inilah yang membuat halaman
+  // statis GitHub Pages tetap bisa mengobrol tanpa backend terpisah.
+  const DIRECT_UPSTREAMS = [
+    'https://hermes.ai.unturf.com',
+    'https://qwen.ai.unturf.com',
+  ];
+  // uncloseai hanya melayani satu model, jadi semua nama model UI dipetakan ke sini.
+  const DIRECT_MODEL = 'turboderp/Qwen3.8-27B-exl3';
+
+  function directChatUrl(base) {
+    return base.replace(/\/$/, '') + '/v1/chat/completions';
+  }
+
+  // Panggil provider langsung dari browser (CORS '*'), failover berurutan.
+  async function directChat(messages) {
+    const errs = [];
+    for (let i = 0; i < DIRECT_UPSTREAMS.length; i++) {
+      const base = DIRECT_UPSTREAMS[i];
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, 30000);
+      try {
+        const res = await fetch(directChatUrl(base), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: DIRECT_MODEL,
+            messages: messages,
+            stream: false,
+            chat_template_kwargs: { enable_thinking: false },
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) {
+          const t = await res.text().catch(function () { return ''; });
+          throw new Error('HTTP ' + res.status + (t ? ': ' + t.slice(0, 100) : ''));
+        }
+        const data = await res.json().catch(function () { return null; });
+        const c = (data && data.choices && data.choices[0] && data.choices[0].message) || {};
+        const text = c.content || c.reasoning_content || '';
+        if (!text || !text.trim()) throw new Error('respons kosong');
+        return text;
+      } catch (e) {
+        clearTimeout(timer);
+        errs.push(base + ' → ' + (e && e.message ? e.message : e));
+      }
+    }
+    throw new Error('Langsung: ' + errs.join(' · '));
+  }
+
   function apiBase() {
     if (!isGitHubPages) return '';
     return backendInUse;
@@ -226,80 +277,79 @@
 
   // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
-  async function backendStreamChat(modelId, messages, onChunk) {
+  async function streamChat(modelId, messages, onChunk, useDirect) {
     setStatus('on', 'menunggu jawaban...');
 
-    // Batasi lama menunggu upstream agar model yang menggantung tidak
-    // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
-    // butuh dua panggilan jadi diberi jendela lebih longgar).
-    const timeoutMs = dolaOn ? 75000 : 30000;
-    const controller = new AbortController();
-    const timer = setTimeout(function () { controller.abort(); },timeoutMs);
-    let res;
-    try {
-      res = await fetch(api('/api/chat'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
-        signal: controller.signal
-      });
-    } catch (e) {
+    let fullText;
+    if (useDirect) {
+      fullText = await directChat(messages);
+    } else {
+      // Batasi lama menunggu upstream agar model yang menggantung tidak
+      // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
+      // butuh dua panggilan jadi diberi jendela lebih longgar).
+      const timeoutMs = dolaOn ? 75000 : 30000;
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, timeoutMs);
+      let res;
+      try {
+        res = await fetch(api('/api/chat'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: modelId, messages, stream: false, dola: dolaOn }),
+          signal: controller.signal
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
+        throw new Error(why || 'fetch failed');
+      }
       clearTimeout(timer);
-      const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
-      throw new Error(why || 'fetch failed');
-    }
-    clearTimeout(timer);
 
-    if (!res.ok) {
-      const errText = await res.text().catch(function () { return ''; });
-      throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
-    }
+      if (!res.ok) {
+        const errText = await res.text().catch(function () { return ''; });
+        throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
+      }
 
-    // Upstream kadang membalas header 200 lalu menahan body-nya; AbortController
-    // hanya memutus fase request,, jadi baca body dengan timeout mandiri agar
-    // model yang menggantung tidak membekukan engine selamanya..
-    let data;
-    try {
-      data = await Promise.race([
-        res.json().catch(function () { return null; }),
-        new Promise(function (resolve) {
-          setTimeout(function () { resolve(null); }, 15000);
-        })
-      ]);
-    } catch (e) {
-      throw new Error('upstream timeout: respons tidak selesai');
-    }
-    // Upstream Zen kerap membalas HTTP  200 dengan badan error; anggap sebagai
-    // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
-
-    if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
-      const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
-      throw new Error('upstream error: ' + em);
-    }
-    const c = data.choices[0].message || {};
-    // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
-
-    // mode non-streaming; baca juga sebagai cadangan bila content kosong..
-    let fullText = c.content || c.reasoning_content || c.reasoning || '';
-    if (!fullText || !fullText.trim()) {
-      throw new Error('upstream error: respons kosong');
+      // Upstream kadang membalas header 200 lalu menahan body-nya; AbortController
+      // hanya memutus fase request, jadi baca body dengan timeout mandiri agar
+      // model yang menggantung tidak membekukan engine selamanya.
+      let data;
+      try {
+        data = await Promise.race([
+          res.json().catch(function () { return null; }),
+          new Promise(function (resolve) {
+            setTimeout(function () { resolve(null); }, 15000);
+          })
+        ]);
+      } catch (e) {
+        throw new Error('upstream timeout: respons tidak selesai');
+      }
+      // Upstream Zen kerap membalas HTTP 200 dengan badan error; anggap sebagai
+      // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
+      if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
+        const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
+        throw new Error('upstream error: ' + em);
+      }
+      const c = data.choices[0].message || {};
+      // Beberapa model (mis. ling) menaruh jawaban di kolom reasoning saat
+      // mode non-streaming; baca juga sebagai cadangan bila content kosong.
+      fullText = c.content || c.reasoning_content || c.reasoning || '';
+      if (!fullText || !fullText.trim()) {
+        throw new Error('upstream error: respons kosong');
+      }
     }
 
     // Simulasikan mengetik agar terasa cepat dan responsif; bila onChunk tidak
     // diberikan (mode paralel), langsung kembalikan teks penuh agar pemenang
-
     // "tercepat" tidak tertunda oleh efek ketik buatan.
-
-
-    const finalText = fullText;
     if (onChunk) {
-      const words = finalText.split(' ');
+      const words = fullText.split(' ');
       for (let i = 0; i < words.length; i++) {
         onChunk(words.slice(0, i + 1).join(' '));
         await new Promise(r => setTimeout(r, 20)); // jeda 20ms
       }
     }
-    return finalText;
+    return fullText;
   }
 
   // === Provider gratis langsung (cadangan bila backend proxy mati) ===
@@ -468,14 +518,22 @@
       let fullText = '';
       let lastRender = 0;
 
-      const renderChunk = (text) => {
-        fullText = text;
-        const now = Date.now();
-        if (now - lastRender > 50) {
-          lastRender = now;
-          msgEls.inner.innerHTML = decorateText(fullText);
-          scrollDown();
-        }
+      // Setiap model punya token stream sendiri. Saat satu model menang, token
+      // lain dikunci agar chunk lambat dari model yang kalah tidak menimpa
+      // jawaban pemenang (dulu menimpa `fullText` sehingga teks tampil terpotong).
+      let winningToken = null;
+      let streamSeq = 0;
+      const renderFor = function (token) {
+        return function (text) {
+          if (winningToken !== null && winningToken !== token) return;
+          fullText = text;
+          const now = Date.now();
+          if (now - lastRender > 50) {
+            lastRender = now;
+            msgEls.inner.innerHTML = decorateText(fullText);
+            scrollDown();
+          }
+        };
       };
 
       // Daftar model yang akan dicoba. Bila mode "Auto"(semua), semua model
@@ -490,6 +548,28 @@
       backupOrder.forEach(function (m) {
         if (modelsToTry.indexOf(m) === -1) modelsToTry.push(m);
       });
+
+      // Pada GitHub Pages tanpa ?backend=, proxy Render kerap tidak tersedia
+      // (404/CORS). Jalankan provider CORS langsung lebih dulu, lalu backend
+      // sebagai cadangan, agar halaman statis tetap bisa mengobrol.
+      const directFirst = isGitHubPages && !override;
+
+      async function runModel(mid) {
+        const token = ++streamSeq;
+        const onChunk = renderFor(token);
+        let text = null;
+        if (directFirst) {
+          try {
+            text = await streamChat(mid, buildThreadHistory(), onChunk, true);
+          } catch (e) {
+            console.warn('Jalur langsung gagal:', e && e.message);
+          }
+        }
+        if (text === null) {
+          text = await streamChat(mid, buildThreadHistory(), onChunk, false);
+        }
+        return { token: token, text: text };
+      }
 
       let success = false;
       let lastError = null;
@@ -526,7 +606,7 @@
           const batch = pendingPool.slice(bi, bi + batchSize);
           setStatus('on', 'mencoba: ' + batch.join(' + '));
           const attempts = batch.map(function (name) {
-            return streamChat(name, buildThreadHistory(), null).then(function (t) { return { name: name, text: t }; }).catch(function (err) {
+            return runModel(name).then(function (r) { return { name: name, text: r.text, token: r.token }; }).catch(function (err) {
               console.warn('Model ' + name + ' gagal:', err.message);
               if (!lastError) lastError = err;
               roundErr = err;
@@ -535,8 +615,12 @@
           });
           try {
             const won = await Promise.any(attempts);
+            // Kunci stream ke token pemenang sebelum render akhir, supaya chunk
+            // model yang kalah (masih berjalan di latar) tidak menimpanya.
+            winningToken = won.token;
             fullText = won.text;
-            renderChunk(fullText);
+            msgEls.inner.innerHTML = decorateText(fullText);
+            scrollDown();
             success = true;
           } catch (err) {
             // Promise.any menolak AggregateError bila semua model pada batch gagal..
@@ -660,14 +744,9 @@ form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
   }
 
   function loadModels() {
-    // GitHub Pages / ?direct=1: backend Render lama sudah tidak ada; pakai
-    // daftar model provider langsung agar UI tidak menunggu fetch yang gagal.
-    if (isGitHubPages || forceDirect) {
-      renderModelNames(FREE_MODELS, FREE_MODELS);
-      populateModelSelect(FREE_MODELS, FREE_MODELS);
-      setStatus('on', 'terhubung (langsung)');
-      return;
-    }
+    // Daftar model di sini statis (FREE_MODELS); kegagalan menyentuh proxy
+    // backend tidak boleh membuat UI tampak rusak, karena pada GitHub Pages
+    // chat berjalan lewat provider CORS langsung.
     Promise.resolve(isGitHubPages ? ensureBackend() : null)
       .then(function () { return fetch(api('/api/models')); })
       .then(function (r) { return r.json(); })
@@ -693,8 +772,9 @@ form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
         setStatus('on', 'terhubung');
       })
       .catch(function () {
-        setStatus('err', 'tak tersedia');
-        modelCountEl.textContent = 'gagal memuat';
+        renderModelNames(FREE_MODELS, FREE_MODELS);
+        populateModelSelect(FREE_MODELS, FREE_MODELS);
+        setStatus('on', 'terhubung');
       });
   }
 
