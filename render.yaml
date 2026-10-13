@@ -1,6 +1,6 @@
 # Render Blueprint — deploy backend Marbel AI satu deploy.
 # Cara pakai: buat "New Blueprint" di Render, hubungkan repo ini — Render membuat service di atas.
-# UPSTREAM menunjuk ke endpoint OpenAI-compatible "Zen" (opencode.ai/zen/v1), gratis dan tanpa API key.
+# UPSTREAM menunjuk ke endpoint OpenAI-compatible gratis (uncloseai + pollinations + Free.ai), tanpa API key.
 services:
   - type: web
     name: marbel-ai
@@ -12,9 +12,10 @@ services:
     envVars:
       - key: PORT
         value: 10000
-      # UPSTREAM: endpoint OpenAI-compatible (Zen — opencode.ai/zen/v1), gratis tanpa API key.
+      # UPSTREAM: endpoint OpenAI-compatible gratis tanpa API key; boleh beberapa
+      # URL dipisah koma (failover berurutan). Sama dengan MarbelAIv2.1.
       - key: UPSTREAM
-        value: https://opencode.ai/zen
+        value: https://hermes.ai.unturf.com,https://qwen.ai.unturf.com,https://text.pollinations.ai,https://api.free.ai
       - key: API_KEY
         sync: false
       # Z.ai (GLM): upstream cadangan opsional untuk model Z.ai — isi ZAI_API_KEY
@@ -34,7 +35,7 @@ services:
       - key: DOLA_MATURE_MODEL
         value: glm-4.7-flash
       - key: DOLA_PREMATURE_MODEL
-        value: ling-3.0-flash-fin-free
+        value: qwen3-8b
       - key: DOLA_ALPHA
         value: "0.1"
       - key: DOLA_REPETITION_PENALTY

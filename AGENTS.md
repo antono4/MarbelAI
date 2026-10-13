@@ -15,7 +15,7 @@
 
 ## Cara menjalankan
 ```bash
-PORT=12000 UPSTREAM=https://opencode.ai/zen node server.js
+PORT=12000 node server.js
 ```
 
 Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`) + proxy `/api/chat`, `/api/models`, dan `/api/status` ke upstream OpenAI-compatible. Tanpa dependency npm.
@@ -33,7 +33,11 @@ Upstream Zen sudah dibuang (free tier-nya menolak di luar klien OpenCode). `FREE
 ## Pola ensemble
 - Mode "Semua Model": jalankan model-model gratis dalam batch paralel; jawaban tercepat yang sukses dipakai.
 
+Model lama Zen (`ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `laguna-s-2.1-free`, `nemotron-3.5-lightning-free`) **sudah dibuang** agar selaras dengan v2.1. Untuk chat via halaman statis GitHub Pages, `app.js` memanggil provider ini langsung dari browser (failover berurutan); backend dipakai sebagai cadangan.
 
+## Pola ensemble
+- Mode "Semua Model": jalankan model gratis secara paralel dalam batch kecil; `Promise.any` mengambil jawaban tercepat yang sukses.
+- Mode single model: model pilihan dicoba penuh dulu, lalu cadangan otomatis (model gratis lain + GLM bila key tersedia).
 
 ## Model Z.ai(GLM)
 

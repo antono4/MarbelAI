@@ -187,6 +187,78 @@
   const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
   let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
+  // Provider CORS langsung — daftar model sama dengan MarbelAIv2.1.
+  //  - uncloseai (hermes.ai.unturf.com & qwen.ai.unturf.com) — CORS '*'.
+  //  - pollinations (text.pollinations.ai) — CORS '*', model alias `openai`.
+  //  - Free.ai (api.free.ai) — model open-weight gratis tanpa API key.
+  const DIRECT_UPSTREAMS = [
+    'https://hermes.ai.unturf.com',
+    'https://qwen.ai.unturf.com',
+    'https://text.pollinations.ai',
+    'https://api.free.ai',
+  ];
+  const DIRECT_PAYLOAD = {
+    // uncloseai memakai vLLM/Qwen yang andai berpikir; matikan agar jawaban bersih.
+    'https://hermes.ai.unturf.com': { chat_template_kwargs: { enable_thinking: false } },
+    'https://qwen.ai.unturf.com': { chat_template_kwargs: { enable_thinking: false } },
+    'https://text.pollinations.ai': {},
+    'https://api.free.ai': {},
+  };
+  // uncloseai kini hanya melayani satu model. pollinations mengenali alias
+  // `openai`; free.ai hanya qwen7b/qwen3-8b.
+  const UNCLOSEAI_MODEL = 'turboderp/Qwen3.8-27B-exl3';
+  const DIRECT_MODEL_MAP = {
+    'https://hermes.ai.unturf.com': { 'qwen3.8-27b': UNCLOSEAI_MODEL, 'gpt-oss-20b': UNCLOSEAI_MODEL, 'qwen3-8b': UNCLOSEAI_MODEL },
+    'https://qwen.ai.unturf.com': { 'qwen3.8-27b': UNCLOSEAI_MODEL, 'gpt-oss-20b': UNCLOSEAI_MODEL, 'qwen3-8b': UNCLOSEAI_MODEL },
+    'https://text.pollinations.ai': { 'qwen3.8-27b': 'openai', 'gpt-oss-20b': 'openai', 'qwen3-8b': 'openai' },
+    'https://api.free.ai': { 'qwen3.8-27b': 'qwen7b', 'gpt-oss-20b': 'qwen7b', 'qwen3-8b': 'qwen3-8b' },
+  };
+
+  function directChatUrl(base) {
+    const b = base.replace(/\/$/, '');
+    // pollinations menaruh endpoint OpenAI-compatible di `/openai`, bukan `/v1`.
+    if (b === 'https://text.pollinations.ai') return b + '/openai';
+    return b + '/v1/chat/completions';
+  }
+
+  // Panggil provider langsung dari browser (CORS), failover berurutan.
+  async function directChat(messages, model) {
+    const errs = [];
+    for (let i = 0; i < DIRECT_UPSTREAMS.length; i++) {
+      const base = DIRECT_UPSTREAMS[i];
+      const upModel = (DIRECT_MODEL_MAP[base] && DIRECT_MODEL_MAP[base][model]) || model;
+      const payload = Object.assign({}, DIRECT_PAYLOAD[base] || {}, {
+        model: upModel,
+        messages: messages,
+        stream: false,
+      });
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, 30000);
+      try {
+        const res = await fetch(directChatUrl(base), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) {
+          const t = await res.text().catch(function () { return ''; });
+          throw new Error('HTTP ' + res.status + (t ? ': ' + t.slice(0, 100) : ''));
+        }
+        const data = await res.json().catch(function () { return null; });
+        const c = (data && data.choices && data.choices[0] && data.choices[0].message) || {};
+        const text = c.content || c.reasoning_content || '';
+        if (!text || !text.trim()) throw new Error('respons kosong');
+        return text;
+      } catch (e) {
+        clearTimeout(timer);
+        errs.push(base + ' → ' + (e && e.message ? e.message : e));
+      }
+    }
+    throw new Error('Langsung: ' + errs.join(' · '));
+  }
+
   function apiBase() {
     if (!isGitHubPages) return '';
     return backendInUse;
@@ -253,6 +325,10 @@
         throw new Error(why || 'fetch failed');
       }
       clearTimeout(timer);
+      const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
+      throw new Error(why || 'fetch failed');
+    }
+    clearTimeout(timer);
 
       if (!res.ok) {
         const errText = await res.text().catch(function () { return ''; });
@@ -286,6 +362,7 @@
       if (!fullText || !fullText.trim()) {
         throw new Error('upstream error: respons kosong');
       }
+    }
     }
 
     // Simulasikan mengetik agar terasa cepat dan responsif; bila onChunk tidak

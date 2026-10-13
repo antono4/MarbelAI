@@ -196,14 +196,15 @@ git clone https://github.com/antono4/MarbelAI.git
 cd MarbelAI
 
 # 2. Jalankan server (UPSTREAM wajib diarahkan ke endpoint OpenAI-compatible)
-PORT=12000 UPSTREAM=https://opencode.ai/zen node server.js
+PORT=12000 UPSTREAM=https://hermes.ai.unturf.com,https://qwen.ai.unturf.com,https://text.pollinations.ai,https://api.free.ai node server.js
 
 # 3. Buka di browser
 #    http://localhost:12000
 ```
 
-Bila `UPSTREAM` tidak diisi, server memakai default `http://localhost:20128`
-(cocok untuk pengembangan lokal bersama proxy lain).
+Bila `UPSTREAM` tidak diisi, server memakai default yang sama (uncloseai +
+pollinations + Free.ai), tanpa API key. Boleh beberapa URL dipisah koma —
+dicoba berurutan sebagai failover.
 
 **Menjalankan tes:**
 
@@ -215,16 +216,14 @@ npm test
 
 ## Model yang Dipakai
 
-Marbel AI memakai endpoint gratis dari **Zen** (`https://opencode.ai/zen`) dan
-opsional **Z.ai** untuk model GLM. Daftar model di bawah mengikuti kode saat ini
-dan dapat berubah kapan saja mengikuti kebijakan provider.
+Daftar model **disamakan dengan [MarbelAIv2.1](https://github.com/antono4/MarbelAIv2.1)**:
+provider gratis tanpa API key dari no-cost-ai. Opsional **Z.ai** untuk model GLM.
 
 | Model | Sumber | Catatan |
 |---|---|---|
-| `ling-3.0-flash-fin-free` | Zen | Cepat dan stabil, prioritas utama |
-| `mimo-v2.5-free` | Zen | Populer, sesekali kena rate-limit |
-| `laguna-s-2.1-free` | Zen | Berhasil tapi lambat (4–9 detik) |
-| `nemotron-3.5-lightning-free` | Zen | Sangat lambat (>9 detik), tetap dicoba sebagai cadangan |
+| `qwen3.8-27b` | uncloseai | Model default |
+| `gpt-oss-20b` | pollinations | Tier anonim |
+| `qwen3-8b` | Free.ai | Model open-weight gratis |
 | `glm-4.7-flash` | Z.ai | Gratis di API resmi Z.ai, **butuh `ZAI_API_KEY`** |
 | `glm-4.5-flash` | Z.ai | Gratis di API resmi Z.ai, **butuh `ZAI_API_KEY`** |
 
@@ -282,7 +281,7 @@ Salinan lengkap ada di [`.env.example`](.env.example).
 | Variabel | Default | Deskripsi |
 |---|---|---|
 | `PORT` | `12000` | Port HTTP server |
-| `UPSTREAM` | `http://localhost:20128` | Base URL endpoint OpenAI-compatible utama (contoh Zen: `https://opencode.ai/zen`) |
+| `UPSTREAM` | `https://hermes.ai.unturf.com,https://qwen.ai.unturf.com,https://text.pollinations.ai,https://api.free.ai` | Base URL endpoint OpenAI-compatible gratis (boleh beberapa, dipisah koma) |
 | `API_KEY` | *(kosong)* | Kunci API upstream utama. Boleh kosong bila upstream tidak memerlukannya |
 | `ZAI_UPSTREAM` | `https://api.z.ai/api/paas/v4` | Base URL cadangan Z.ai (GLM) |
 | `ZAI_API_KEY` | *(kosong)* | Kunci API Z.ai. Model GLM aktif hanya bila ini diisi |
@@ -291,7 +290,7 @@ Salinan lengkap ada di [`.env.example`](.env.example).
 | `LOG_CHAT` | *(kosong)* | Set `1` untuk mencatat setiap request chat di konsol backend |
 | `DOLA_ENABLED` | `0` | `1` = DoLa aktif sebagai default di server |
 | `DOLA_MATURE_MODEL` | `glm-4.7-flash` | Model mature (kuat/faktual) untuk kontras |
-| `DOLA_PREMATURE_MODEL` | `ling-3.0-flash-fin-free` | Model premature (lemah/lancar) untuk kontras |
+| `DOLA_PREMATURE_MODEL` | `qwen3-8b` | Model premature (lemah/lancar) untuk kontras |
 | `DOLA_ALPHA` | `0.1` | Nilai `alpha` untuk Adaptive Plausibility Constraint |
 | `DOLA_REPETITION_PENALTY` | `1.2` | Nilai `theta` untuk repetition penalty |
 | `DOLA_TOP_LOGPROBS` | `20` | Jumlah alternatif `logprobs` per token |
@@ -317,7 +316,7 @@ Salinan lengkap ada di [`.env.example`](.env.example).
 curl -X POST http://localhost:12000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "ling-3.0-flash-fin-free",
+    "model": "qwen3.8-27b",
     "messages": [{ "role": "user", "content": "Halo, siapa kamu?" }]
   }'
 ```
@@ -328,7 +327,7 @@ curl -X POST http://localhost:12000/api/chat \
 curl -X POST http://localhost:12000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "ling-3.0-flash-fin-free",
+    "model": "qwen3.8-27b",
     "stream": false,
     "dola": true,
     "messages": [{ "role": "user", "content": "Ibu kota Washington?" }]
@@ -340,7 +339,7 @@ curl -X POST http://localhost:12000/api/chat \
 ```json
 {
   "zai": { "available": false },
-  "upstream": "https://opencode.ai/zen",
+  "upstream": "https://hermes.ai.unturf.com",
   "use_sse": true
 }
 ```
@@ -354,7 +353,7 @@ docker build -t marbel-ai .
 
 docker run -p 10000:10000 \
   -e PORT=10000 \
-  -e UPSTREAM=https://opencode.ai/zen \
+  -e UPSTREAM=https://hermes.ai.unturf.com,https://qwen.ai.unturf.com,https://text.pollinations.ai,https://api.free.ai \
   marbel-ai
 ```
 
