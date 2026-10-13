@@ -98,3 +98,10 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - File sumber memakai gaya penulisan tidak biasa(koma-titik tanpa spasi konsisten,. `node -c` valid meskipun tampak aneh; jangan"merapikan" tanpa tes..
 - `server.js` punya timeout upstream(30s chat,, 15s models) dan tidak kirim header `Authorization` kosong;; `LOG_CHAT=1` mengaktifkan log request chat di konsol backend..
 - Frontend membaca jawaban dari `message.content`, lalu fallback `message.reasoning_content`/`message.reasoning`(beberapa model seperti `ling` menaruh jawaban di kolom reasoning saat non-streaming).. Sesuaikan bila upstream mengubah format jawaban..
+
+### Regresi jawaban terpotong di mode paralel (sudah diperbaiki)
+
+- **Gejala:** jawaban AI tampil terpotong (mis. `"Nama saya Marbel AI. Hasil dari 2+2"` padahal upstream mengirim `"...adalah 4."`), dan gejalanya hilang-timbul tergantung model mana yang menang.
+- **Sebab:** semua model pada batch berbagi satu `renderChunk`. Efek ketik `streamChat` berjalan per-kata (20 ms/kata) dan tetap lanjut di latar setelah `Promise.any` selesai. Saat pemenang selesai, `streamChat`-nya menulis `fullText = <teks lengkap>` lalu mengembalikan; tetapi model yang **kalah** masih dalam loop ketiknya dan menimpa `fullText` dengan potongan yang lebih pendek. `success = true` membuat loop batch berikutnya dilewati, jadi `fullText` tetap versi potongan itu saat render final.
+- **Perbaikan:** setiap pemanggilan model kini punya token sendiri (`renderFor(token)`), dan `winningToken` dikunci ke pemenang **sebelum** render final. Chunk dari model lain diabaikan sehingga jawaban pemenang tidak bisa ditimpa.
+- `npm test` tidak menguji `app.js`; uji ini hanya bisa ditangkap lewat browser. Verifikasi cepat: kirim pesan dan pastikan teks tampil **sama persis** dengan yang dikembalikan upstream.
