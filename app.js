@@ -187,57 +187,6 @@
   const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
   let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
-  // Provider CORS langsung: dipakai sebagai cadangan saat proxy backend tidak
-  // tersedia (mis. service Render tidur/404). Inilah yang membuat halaman
-  // statis GitHub Pages tetap bisa mengobrol tanpa backend terpisah.
-  const DIRECT_UPSTREAMS = [
-    'https://hermes.ai.unturf.com',
-    'https://qwen.ai.unturf.com',
-  ];
-  // uncloseai hanya melayani satu model, jadi semua nama model UI dipetakan ke sini.
-  const DIRECT_MODEL = 'turboderp/Qwen3.8-27B-exl3';
-
-  function directChatUrl(base) {
-    return base.replace(/\/$/, '') + '/v1/chat/completions';
-  }
-
-  // Panggil provider langsung dari browser (CORS '*'), failover berurutan.
-  async function directChat(messages) {
-    const errs = [];
-    for (let i = 0; i < DIRECT_UPSTREAMS.length; i++) {
-      const base = DIRECT_UPSTREAMS[i];
-      const controller = new AbortController();
-      const timer = setTimeout(function () { controller.abort(); }, 30000);
-      try {
-        const res = await fetch(directChatUrl(base), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            model: DIRECT_MODEL,
-            messages: messages,
-            stream: false,
-            chat_template_kwargs: { enable_thinking: false },
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-        if (!res.ok) {
-          const t = await res.text().catch(function () { return ''; });
-          throw new Error('HTTP ' + res.status + (t ? ': ' + t.slice(0, 100) : ''));
-        }
-        const data = await res.json().catch(function () { return null; });
-        const c = (data && data.choices && data.choices[0] && data.choices[0].message) || {};
-        const text = c.content || c.reasoning_content || '';
-        if (!text || !text.trim()) throw new Error('respons kosong');
-        return text;
-      } catch (e) {
-        clearTimeout(timer);
-        errs.push(base + ' → ' + (e && e.message ? e.message : e));
-      }
-    }
-    throw new Error('Langsung: ' + errs.join(' · '));
-  }
-
   function apiBase() {
     if (!isGitHubPages) return '';
     return backendInUse;
@@ -277,13 +226,13 @@
 
   // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
-  async function streamChat(modelId, messages, onChunk, useDirect) {
+  // backendStreamChat: panggil proxy /api/chat. Fallback ke provider langsung
+  // ditangani oleh pembungkus streamChat di bawah.
+  async function backendStreamChat(modelId, messages, onChunk) {
     setStatus('on', 'menunggu jawaban...');
 
     let fullText;
-    if (useDirect) {
-      fullText = await directChat(messages);
-    } else {
+    {
       // Batasi lama menunggu upstream agar model yang menggantung tidak
       // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
       // butuh dua panggilan jadi diberi jendela lebih longgar).
@@ -417,11 +366,12 @@
     throw lastErr || new Error('semua provider langsung gagal');
   }
 
-  // streamChat = coba backend proxy dulu; bila gagal dengan cara apa pun
-  // (backend mati, CORS, atau upstream proxy error), jatuh ke provider gratis
-  // langsung dari browser agar user selalu dapat jawaban.
-  async function streamChat(modelId, messages, onChunk) {
-    if (forceDirect) return await directChat(messages, onChunk);
+  // streamChat = jalur backend proxy + fallback provider langsung.
+  // `useDirect` true memaksa jalur langsung (dipakai di GitHub Pages agar tak
+  // menunggu proxy Render yang sudah mati); bila false, coba backend dulu lalu
+  // otomatis jatuh ke provider langsung saat backend gagal dengan cara apa pun.
+  async function streamChat(modelId, messages, onChunk, useDirect) {
+    if (useDirect || forceDirect) return await directChat(messages, onChunk);
     try {
       return await backendStreamChat(modelId, messages, onChunk);
     } catch (e) {
