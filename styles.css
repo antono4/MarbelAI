@@ -140,7 +140,7 @@ html[data-theme="light"] .aurora { opacity:.20; }
 .brand-tag { font-size:10px; letter-spacing:.08em; text-transform:uppercase; font-weight:600; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 /* pemilih tema (hijau / laut / senja / terang) */
-.theme-switch { display:flex; align-items:center; gap:4px; flex:0 0 auto; }
+.theme-switch { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .tsw-btn {
   width:22px; height:22px; padding:0;
   border-radius:50%;
@@ -224,6 +224,7 @@ html[data-theme="light"] .aurora { opacity:.20; }
 
 .sidebar-foot {
   flex:0 0 auto;
+  display:flex; flex-direction:column; gap:10px;
   padding:12px 8px 2px;
   border-top:1px solid var(--line);
   margin-top:auto;
@@ -233,6 +234,7 @@ html[data-theme="light"] .aurora { opacity:.20; }
 .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
 .dot.on { background:var(--ok); }
 .dot.err { background:var(--err); }
+.foot-label { font-size:11px; letter-spacing:.12em; text-transform:uppercase; font-weight:700; color:var(--muted); margin-right:2px; }
 
 /* ================== Scrim sidebar (mobile) ================== */
 .scrim {

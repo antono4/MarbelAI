@@ -56,6 +56,15 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - Strip saran `#suggestions.track` beranimasi `roll` 46s; `app.js` menggandakan kartu secara otomatis agar loop mulus (tanpa perlu duplikat di markup).
 - Kartu saran memakai `data-prompt`; `app.js` mengirim teksnya lewat `onSend`.
 
+## GitHub Pages tanpa backend (perbaikan penting)
+
+- Proxy `https://marbel-ai.onrender.com` **sudah mati** (Render membalas 404 `no-server` tanpa header CORS), jadi jalur backend tidak bisa dipakai dari halaman statis.
+- Karena itu `app.js` kini punya **jalur provider CORS langsung** (`DIRECT_UPSTREAMS`: `hermes.ai.unturf.com`, `qwen.ai.unturf.com`, model `turboderp/Qwen3.8-27B-exl3`) yang dipanggil dari browser dengan `Access-Control-Allow-Origin: *`.
+- Di GitHub Pages tanpa `?backend=`, `onSend()` menjalankan **jalur langsung lebih dulu** (`directFirst`), lalu backend sebagai cadangan. Parameter `?backend=URL` tetap memaksa pemakaian proxy sendiri.
+- Nama model UI (Zen/GLM) hanya label; jalur langsung selalu memakai satu model uncloseai. Ini disengaja agar halaman statis tetap berfungsi 24/7.
+- `loadModels()` tidak lagi menandai "gagal" saat proxy tidak terjangkau — daftar model statis tetap ditampilkan dan status "terhubung", karena chat berjalan lewat jalur langsung.
+- Pemilih tema (`.theme-switch`) dipindah ke `.sidebar-foot` bersama status; sebelumnya berdesakan di `.sidebar-head` sehingga `.brand-name`/`.brand-tag` terpotong.
+
 ## Catatan penting
 
 - File sumber memakai gaya penulisan tidak biasa (koma-titik tanpa spasi konsisten). `node -c` valid meskipun tampak aneh; jangan "merapikan" tanpa tes.

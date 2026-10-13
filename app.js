@@ -181,6 +181,57 @@
 
   const FREE_MODELS = ['ling-3.0-flash-fin-free', 'nemotron-3-ultra-free', 'mimo-v2.5-free', 'laguna-s-2.1-free', 'glm-4.7-flash', 'glm-4.5-flash'];
 
+  // Provider CORS langsung: dipakai sebagai cadangan saat proxy backend tidak
+  // tersedia (mis. service Render tidur/404). Inilah yang membuat halaman
+  // statis GitHub Pages tetap bisa mengobrol tanpa backend terpisah.
+  const DIRECT_UPSTREAMS = [
+    'https://hermes.ai.unturf.com',
+    'https://qwen.ai.unturf.com',
+  ];
+  // uncloseai hanya melayani satu model, jadi semua nama model UI dipetakan ke sini.
+  const DIRECT_MODEL = 'turboderp/Qwen3.8-27B-exl3';
+
+  function directChatUrl(base) {
+    return base.replace(/\/$/, '') + '/v1/chat/completions';
+  }
+
+  // Panggil provider langsung dari browser (CORS '*'), failover berurutan.
+  async function directChat(messages) {
+    const errs = [];
+    for (let i = 0; i < DIRECT_UPSTREAMS.length; i++) {
+      const base = DIRECT_UPSTREAMS[i];
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, 30000);
+      try {
+        const res = await fetch(directChatUrl(base), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: DIRECT_MODEL,
+            messages: messages,
+            stream: false,
+            chat_template_kwargs: { enable_thinking: false },
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) {
+          const t = await res.text().catch(function () { return ''; });
+          throw new Error('HTTP ' + res.status + (t ? ': ' + t.slice(0, 100) : ''));
+        }
+        const data = await res.json().catch(function () { return null; });
+        const c = (data && data.choices && data.choices[0] && data.choices[0].message) || {};
+        const text = c.content || c.reasoning_content || '';
+        if (!text || !text.trim()) throw new Error('respons kosong');
+        return text;
+      } catch (e) {
+        clearTimeout(timer);
+        errs.push(base + ' → ' + (e && e.message ? e.message : e));
+      }
+    }
+    throw new Error('Langsung: ' + errs.join(' · '));
+  }
+
   function apiBase() {
     if (!isGitHubPages) return '';
     return backendInUse;
@@ -202,52 +253,56 @@
   
   // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
-  async function streamChat(modelId, messages, onChunk) {
+  async function streamChat(modelId, messages, onChunk, useDirect) {
     setStatus('on', 'menunggu jawaban...');
 
-    // Batasi lama menunggu upstream agar model yang menggantung tidak
-    // memblok model lain (pakai AbortController + timeout 30 detik)
-    const controller = new AbortController();
-    const timer = setTimeout(function () { controller.abort(); },30000);
-    let res;
-    try {
-      res = await fetch(api('/api/chat'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: modelId, messages, stream: false }),
-        signal: controller.signal
-      });
-    } catch (e) {
+    let fullText;
+    if (useDirect) {
+      fullText = await directChat(messages);
+    } else {
+      // Batasi lama menunggu upstream agar model yang menggantung tidak
+      // memblok model lain (pakai AbortController + timeout 30 detik)
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); },30000);
+      let res;
+      try {
+        res = await fetch(api('/api/chat'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: modelId, messages, stream: false }),
+          signal: controller.signal
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
+        throw new Error(why || 'fetch failed');
+      }
       clearTimeout(timer);
-      const why = (e && e.name === 'AbortError') ? 'upstream timeout' : (e && e.message);
-      throw new Error(why || 'fetch failed');
-    }
-    clearTimeout(timer);
 
-    if (!res.ok) {
-      const errText = await res.text().catch(function () { return ''; });
-      throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
-    }
+      if (!res.ok) {
+        const errText = await res.text().catch(function () { return ''; });
+        throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 100));
+      }
 
-    const data = await res.json().catch(function () { return null; });
-    // Upstream Zen kerap membalas HTTP  200 dengan badan error; anggap sebagai
-    // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
+      const data = await res.json().catch(function () { return null; });
+      // Upstream Zen kerap membalas HTTP  200 dengan badan error; anggap sebagai
+      // kegagalan agar retry/fallback berjalan dan tidak tampil kosong.
 
-    if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
-      const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
-      throw new Error('upstream error: ' + em);
-    }
-    const c = data.choices[0].message || {};
-    let fullText = c.content || c.reasoning_content || '';
-    if (!fullText || !fullText.trim()) {
-      throw new Error('upstream error: respons kosong');
+      if (!data || !Array.isArray(data.choices) || !data.choices[0]) {
+        const em = (data && data.error && (data.error.message || data.error.type)) || 'responden kosong dari upstream';
+        throw new Error('upstream error: ' + em);
+      }
+      const c = data.choices[0].message || {};
+      fullText = c.content || c.reasoning_content || '';
+      if (!fullText || !fullText.trim()) {
+        throw new Error('upstream error: respons kosong');
+      }
     }
 
     // Simulasikan mengetik agar terasa cepat dan responsif
     const words = fullText.split(' ');
     for (let i = 0; i < words.length; i++) {
-      fullText = words.slice(0, i + 1).join(' ');
-      onChunk(fullText);
+      onChunk(words.slice(0, i + 1).join(' '));
       await new Promise(r => setTimeout(r, 20)); // jeda 20ms
     }
     return fullText;
@@ -360,6 +415,22 @@
         if (modelsToTry.indexOf(m) === -1) modelsToTry.push(m);
       });
 
+      // Pada GitHub Pages tanpa ?backend=, proxy Render kerap tidak tersedia
+      // (404/CORS). Jalankan provider CORS langsung lebih dulu, lalu backend
+      // sebagai cadangan, agar halaman statis tetap bisa mengobrol.
+      const directFirst = isGitHubPages && !override;
+
+      async function runModel(mid) {
+        if (directFirst) {
+          try {
+            return await streamChat(mid, buildThreadHistory(), renderChunk, true);
+          } catch (e) {
+            console.warn('Jalur langsung gagal:', e && e.message);
+          }
+        }
+        return await streamChat(mid, buildThreadHistory(), renderChunk, false);
+      }
+
       let success = false;
       let lastError = null;
 
@@ -382,7 +453,7 @@
           let modelToUse = modelsToTry[i];
           try {
             setStatus('on', 'mencoba model: ' + modelToUse + '…');
-            await streamChat(modelToUse, buildThreadHistory(), renderChunk);
+            await runModel(modelToUse);
             success = true;
             break; // Berhenti jika sudah dapat jawaban
           } catch (err) {
@@ -509,6 +580,9 @@
   }
 
   function loadModels() {
+    // Daftar model di sini statis (FREE_MODELS); kegagalan menyentuh proxy
+    // backend tidak boleh membuat UI tampak rusak, karena pada GitHub Pages
+    // chat berjalan lewat provider CORS langsung.
     Promise.resolve(isGitHubPages ? ensureBackend() : null)
       .then(function () { return fetch(api('/api/models')); })
       .then(function (r) { return r.json(); })
@@ -525,8 +599,9 @@
         setStatus('on', 'terhubung');
       })
       .catch(function () {
-        setStatus('err', 'tak tersedia');
-        modelCountEl.textContent = 'gagal memuat';
+        renderModelNames(FREE_MODELS, FREE_MODELS);
+        populateModelSelect(FREE_MODELS, FREE_MODELS);
+        setStatus('on', 'terhubung');
       });
   }
 
