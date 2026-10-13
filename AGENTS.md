@@ -47,6 +47,15 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - Pencarian model diulang hingga 4 gelombang penuh dengan backoff eksponensial berjitter (~1.2s, 2s, 3.6s, 6.8s) + jeda pendinginan 2.5s tiap gelombang, jadi bila semua model sesak sesaat ( user otomatis mendapat jawaban begitu provider pulih tanpa menekan kirim ulang. Kalau tetap gagal setelah 4 gelombang, barulah UI menampilkan pesan error.
 
 
+## Tampilan (UI terlampir, tema gelap ala Gemini)
+
+- `index.html` + `styles.css` memakai gaya desain "terlampir": default **gelap** (`--bg:#131314`), aksen biru-ungu-merah (`--accent:#4285f4`, `--accent-2:#9b72cb`, `--accent-3:#d96570`), sidebar drawer, strip saran berjalan, daftar model, composer mengambang.
+- Pemilih tema asli tetap ada (4 tema) dan kini memakai token `--bg/--bg-soft/--line/--accent/--panel/--composer`: `green` (default), `ocean`, `sunset`, `light`. Tombol `.tsw-btn[data-theme]` + `.theme-switch` dipertahankan karena `app.js` membacanya.
+- Kontrak DOM `app.js` **wajib** dipertahankan saat mengubah markup: id `welcome`, `messages`, `activeBadge`, `form`, `input`, `model`, `send`, `newThread`, `threadList`, `suggestions`, `statusDot`, `statusLabel`, `sideToggle`, `modelNames`, `modelCount`; kelas `.layout`, `.theme-switch`, `.tsw-btn`, `.mname`, `.msg`/`.role-tag`/`.ubody`.
+- `.scrim` dibuat runtime di `app.js` (di dalam `.main`); sidebar disembunyikan lewat kelas `collapsed` di `.layout`, dan di ponsel (`≤768px`) jadi drawer + scrim.
+- Strip saran `#suggestions.track` beranimasi `roll` 46s; `app.js` menggandakan kartu secara otomatis agar loop mulus (tanpa perlu duplikat di markup).
+- Kartu saran memakai `data-prompt`; `app.js` mengirim teksnya lewat `onSend`.
+
 ## Catatan penting
 
 - File sumber memakai gaya penulisan tidak biasa (koma-titik tanpa spasi konsisten). `node -c` valid meskipun tampak aneh; jangan "merapikan" tanpa tes.
