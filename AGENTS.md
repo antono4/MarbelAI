@@ -74,6 +74,13 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 - `loadModels()` tidak lagi menandai "gagal" saat proxy tidak terjangkau — daftar model statis tetap ditampilkan dan status "terhubung", karena chat berjalan lewat jalur langsung.
 - Pemilih tema (`.theme-switch`) dipindah ke `.sidebar-foot` bersama status; sebelumnya berdesakan di `.sidebar-head` sehingga `.brand-name`/`.brand-tag` terpotong.
 
+### Regresi sintaks (sudah diperbaiki)
+
+- Patch jalur langsung sempat menempatkan blok `if (!res.ok)` **di dalam** `catch (e)` pada `streamChat`, dan menghapus penutup `catch` beserta `clearTimeout(timer)`. Akibatnya `app.js` gagal di-parse (`Unexpected token ')'` di akhir IIFE) dan **seluruh halaman mati**: tidak ada listener terpasang, tombol tema tidak bereaksi, chat tidak jalan.
+- Selain itu `runModel()` (yang memilih jalur langsung vs backend) terdefinisi tetapi **tidak pernah dipanggil** — loop batch masih memanggil `streamChat(...)` tanpa argumen `useDirect`, sehingga fitur jalur langsung tidak aktif sama sekali.
+- Perbaikan: `streamChat` diberi cabang `useDirect` → `directChat(messages)`, `clearTimeout(timer)` dikembalikan, dan loop batch memanggil `runModel(name)`.
+- **Selalu jalankan `node -c app.js` sebelum commit** — `npm test` hanya menguji `dola.js` dan `server.js`, jadi kesalahan sintaks di `app.js` tidak tertangkap.
+
 ## Catatan penting
 
 
