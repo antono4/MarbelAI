@@ -298,13 +298,13 @@
 
   // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
-  async function streamChat(modelId, messages, onChunk, useDirect) {
+  // backendStreamChat: panggil proxy /api/chat. Fallback ke provider langsung
+  // ditangani oleh pembungkus streamChat di bawah.
+  async function backendStreamChat(modelId, messages, onChunk) {
     setStatus('on', 'menunggu jawaban...');
 
     let fullText;
-    if (useDirect) {
-      fullText = await directChat(messages);
-    } else {
+    {
       // Batasi lama menunggu upstream agar model yang menggantung tidak
       // memblok model lain (pakai AbortController + timeout 30 detik; DoLa
       // butuh dua panggilan jadi diberi jendela lebih longgar).
@@ -443,11 +443,12 @@
     throw lastErr || new Error('semua provider langsung gagal');
   }
 
-  // streamChat = coba backend proxy dulu; bila gagal dengan cara apa pun
-  // (backend mati, CORS, atau upstream proxy error), jatuh ke provider gratis
-  // langsung dari browser agar user selalu dapat jawaban.
-  async function streamChat(modelId, messages, onChunk) {
-    if (forceDirect) return await directChat(messages, onChunk);
+  // streamChat = jalur backend proxy + fallback provider langsung.
+  // `useDirect` true memaksa jalur langsung (dipakai di GitHub Pages agar tak
+  // menunggu proxy Render yang sudah mati); bila false, coba backend dulu lalu
+  // otomatis jatuh ke provider langsung saat backend gagal dengan cara apa pun.
+  async function streamChat(modelId, messages, onChunk, useDirect) {
+    if (useDirect || forceDirect) return await directChat(messages, onChunk);
     try {
       return await backendStreamChat(modelId, messages, onChunk);
     } catch (e) {
