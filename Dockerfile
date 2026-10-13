@@ -3,7 +3,7 @@ WORKDIR /app
 
 # Tidak ada dependency npm publik; cukup salin kode.
 COPY package.json* ./
-COPY server.js index.html app.js styles.css README.md ./
+COPY server.js dola.js index.html app.js styles.css README.md ./
 
 ENV PORT=10000
 ENV NODE_ENV=production

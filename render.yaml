@@ -27,5 +27,17 @@ services:
         value: "*"
       - key: USE_SSE
         value: "0"
+      # DoLa (arXiv:2309.03883): kontras logprobs dua model untuk faktualitas.
+      # Butuh ZAI_API_KEY agar model mature (GLM) melayani.
+      - key: DOLA_ENABLED
+        value: "0"
+      - key: DOLA_MATURE_MODEL
+        value: glm-4.7-flash
+      - key: DOLA_PREMATURE_MODEL
+        value: ling-3.0-flash-fin-free
+      - key: DOLA_ALPHA
+        value: "0.1"
+      - key: DOLA_REPETITION_PENALTY
+        value: "1.2"
 
 
