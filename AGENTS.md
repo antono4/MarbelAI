@@ -1,7 +1,19 @@
 # Marbel AI — Catatan Repo
 
-## Cara menjalankan
+## Backend proxy sudah mati → fallback provider langsung
 
+- **`marbel-ai.onrender.com` sudah tidak ada** (Render membalas `404` dengan header `x-render-routing: no-server`). Di GitHub Pages, UI lama menunjuk ke sana sehingga muncul **"Failed to fetch"**.
+- Perbaikan: `app.js` sekarang punya **fallback provider gratis langsung dari browser** (`directChat`) via endpoint yang mendukung CORS:
+  - `hermes.ai.unturf.com` (`turboderp/Qwen3.8-27B-exl3`)
+  - `qwen.ai.unturf.com` (`turboderp/Qwen3.8-27B-exl3`)
+  - `text.pollinations.ai/openai` (`openai`)
+  - `api.free.ai/v1/chat/completions` (`qwen7b`)
+- `streamChat` mencoba backend proxy dulu; **bila gagal dengan cara apa pun** (backend mati, CORS, upstream error) otomatis beralih ke `directChat`. Jadi UI tetap jalan tanpa backend.
+- `?direct=1` memaksa mode provider langsung (untuk debugging / saat backend mati).
+- Di GitHub Pages, `loadModels()` langsung memakai `FREE_MODELS` (tak menunggu fetch backend yang pasti gagal).
+- **Catatan:** sistem prompt tetap dikirim sebagai pesan `system` (bukan field `system` di payload).
+
+## Cara menjalankan
 ```bash
 PORT=12000 UPSTREAM=https://opencode.ai/zen node server.js
 ```
@@ -10,17 +22,16 @@ Server berfungsi ganda: serve file statis (`index.html`, `app.js`, `styles.css`)
 
 
 
-## Model gratis(valid per 2026-08)
+## Model gratis (per 2026-10)
 
-- `ling-3.0-flash-fin-free` — cepat & stabil (~1s,. prioritas utama)
-- `mimo-v2.5-free` — populer, sesekali rate-limit
-- `laguna-s-2.1-free` — bisa sukses tapi lambat (4-9s..
+Upstream Zen sudah dibuang (free tier-nya menolak di luar klien OpenCode). `FREE_MODELS` di `app.js` kini menunjuk provider CORS-langsung:
 
-
-- `nemotron-3.5-lightning-free` — sangat lambat (>9s) tapi tetap dicoba sebagai cadangan..
+- `Qwen3.8-27B` (uncloseai, default) — `turboderp/Qwen3.8-27B-exl3`
+- `gpt-oss-20b` (pollinations)
+- `Qwen3-30B` (Free.ai)
 
 ## Pola ensemble
-- Mode "Semua Model": jalankan 6 model (termasuk Z.ai GLM bila ada key); langsung resolve setelah 2 sukses (biasanya ling + nemotron-3-ultra dalam ~1-2s., lalu agregator gabungkan jawaban.
+- Mode "Semua Model": jalankan model-model gratis dalam batch paralel; jawaban tercepat yang sukses dipakai.
 
 
 

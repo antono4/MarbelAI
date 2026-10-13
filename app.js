@@ -179,8 +179,11 @@
   const override = new URLSearchParams(window.location.search).get('backend');
   let backendInUse = override || DEFAULT_BACKEND;
   const isGitHubPages = window.location.hostname.indexOf('github.io') !== -1;
+  // ?direct=1 memaksa pemakaian provider gratis langsung dari browser,
+  // melewati backend proxy (berguna saat backend mati / untuk debugging).
+  const forceDirect = new URLSearchParams(window.location.search).get('direct') === '1';
 
-  const FREE_MODELS = ['ling-3.0-flash-fin-free', 'mimo-v2.5-free', 'laguna-s-2.1-free', 'nemotron-3.5-lightning-free'];
+  const FREE_MODELS = ['Qwen3.8-27B', 'gpt-oss-20b', 'Qwen3-30B'];
   const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
   let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
@@ -223,7 +226,7 @@
 
   // === FITUR STREAMING BARU (Non-Streaming Cadangan) ===
   // Mode Non-Streaming (Cadangan jika server tidak support stream)
-  async function streamChat(modelId, messages, onChunk) {
+  async function backendStreamChat(modelId, messages, onChunk) {
     setStatus('on', 'menunggu jawaban...');
 
     // Batasi lama menunggu upstream agar model yang menggantung tidak
@@ -297,6 +300,85 @@
       }
     }
     return finalText;
+  }
+
+  // === Provider gratis langsung (cadangan bila backend proxy mati) ===
+  // Semua endpoint di bawah mengizinkan CORS, jadi bisa dipanggil langsung
+  // dari browser GitHub Pages tanpa backend. Dipakai otomatis bila fetch ke
+  // /api/chat gagal (mis. backend Render sudah tidak ada).
+  const DIRECT_PROVIDERS = [
+    {
+      label: 'uncloseai-hermes',
+      url: 'https://hermes.ai.unturf.com/v1/chat/completions',
+      model: 'turboderp/Qwen3.8-27B-exl3',
+      extra: { chat_template_kwargs: { enable_thinking: false } },
+    },
+    {
+      label: 'uncloseai-qwen',
+      url: 'https://qwen.ai.unturf.com/v1/chat/completions',
+      model: 'turboderp/Qwen3.8-27B-exl3',
+      extra: { chat_template_kwargs: { enable_thinking: false } },
+    },
+    {
+      label: 'pollinations',
+      url: 'https://text.pollinations.ai/openai',
+      model: 'openai',
+    },
+    {
+      label: 'free.ai',
+      url: 'https://api.free.ai/v1/chat/completions',
+      model: 'qwen7b',
+    },
+  ];
+
+  async function directChat(messages, onChunk) {
+    let lastErr = null;
+    for (let i = 0; i < DIRECT_PROVIDERS.length; i++) {
+      const p = DIRECT_PROVIDERS[i];
+      const payload = Object.assign({ model: p.model, messages: messages, stream: false, max_tokens: 1024 }, p.extra || {});
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, 30000);
+      try {
+        const res = await fetch(p.url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) { lastErr = new Error('HTTP ' + res.status + ' @ ' + p.label); continue; }
+        const data = await res.json().catch(function () { return null; });
+        const c = data && data.choices && data.choices[0] && data.choices[0].message;
+        const fullText = c && (c.content || c.reasoning_content || c.reasoning);
+        if (!fullText || !fullText.trim()) { lastErr = new Error('respons kosong @ ' + p.label); continue; }
+        if (onChunk) {
+          const words = fullText.split(' ');
+          for (let w = 0; w < words.length; w++) {
+            onChunk(words.slice(0, w + 1).join(' '));
+            await new Promise(function (r) { setTimeout(r, 20); });
+          }
+        }
+        return fullText;
+      } catch (e) {
+        clearTimeout(timer);
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('semua provider langsung gagal');
+  }
+
+  // streamChat = coba backend proxy dulu; bila gagal dengan cara apa pun
+  // (backend mati, CORS, atau upstream proxy error), jatuh ke provider gratis
+  // langsung dari browser agar user selalu dapat jawaban.
+  async function streamChat(modelId, messages, onChunk) {
+    if (forceDirect) return await directChat(messages, onChunk);
+    try {
+      return await backendStreamChat(modelId, messages, onChunk);
+    } catch (e) {
+      console.warn('Backend gagal, beralih ke provider langsung:', (e && e.message) || e);
+      setStatus('on', 'backend tak tersedia, pakai provider langsung…');
+      return await directChat(messages, onChunk);
+    }
   }
 
   function buildThreadHistory() {
@@ -578,6 +660,14 @@ form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
   }
 
   function loadModels() {
+    // GitHub Pages / ?direct=1: backend Render lama sudah tidak ada; pakai
+    // daftar model provider langsung agar UI tidak menunggu fetch yang gagal.
+    if (isGitHubPages || forceDirect) {
+      renderModelNames(FREE_MODELS, FREE_MODELS);
+      populateModelSelect(FREE_MODELS, FREE_MODELS);
+      setStatus('on', 'terhubung (langsung)');
+      return;
+    }
     Promise.resolve(isGitHubPages ? ensureBackend() : null)
       .then(function () { return fetch(api('/api/models')); })
       .then(function (r) { return r.json(); })
