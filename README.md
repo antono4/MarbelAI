@@ -231,7 +231,7 @@ provider gratis tanpa API key dari no-cost-ai. Opsional **Z.ai** untuk model GLM
 ### Model `marbel` (Phi-3 Mini — lokal)
 
 `marbel` adalah Phi-3 Mini 4k Instruct yang di-*fine-tune* LoRA untuk Marbel AI
-dan dijalankan di CPU lewat `llama.cpp` (repo `marbel-ai`/phi3-mini). Server itu
+dan dijalankan di CPU lewat `llama.cpp` ([antono4/phi3-mini-ai](https://github.com/antono4/phi3-mini-ai)). Server itu
 menyediakan endpoint OpenAI-compatible dengan CORS, sehingga bisa dipanggil dari
 browser.
 
