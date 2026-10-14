@@ -221,11 +221,30 @@ provider gratis tanpa API key dari no-cost-ai. Opsional **Z.ai** untuk model GLM
 
 | Model | Sumber | Catatan |
 |---|---|---|
+| `marbel` | Phi-3 Mini (LoRA) | **Model Marbel sendiri**, di-serve server OpenAI-compatible. Aktif bila `MARBEL_API_BASE` diisi |
 | `qwen3.8-27b` | uncloseai | Model default |
 | `gpt-oss-20b` | pollinations | Tier anonim |
 | `qwen3-8b` | Free.ai | Model open-weight gratis |
 | `glm-4.7-flash` | Z.ai | Gratis di API resmi Z.ai, **butuh `ZAI_API_KEY`** |
 | `glm-4.5-flash` | Z.ai | Gratis di API resmi Z.ai, **butuh `ZAI_API_KEY`** |
+
+### Model `marbel` (Phi-3 Mini — lokal)
+
+`marbel` adalah Phi-3 Mini 4k Instruct yang di-*fine-tune* LoRA untuk Marbel AI
+dan dijalankan di CPU lewat `llama.cpp` (repo `marbel-ai`/phi3-mini). Server itu
+menyediakan endpoint OpenAI-compatible dengan CORS, sehingga bisa dipanggil dari
+browser.
+
+- **Lewat backend proxy:** isi `MARBEL_API_BASE` (mis.
+  `https://marbel-phi3.example.com`) di environment backend. Model `marbel`
+  muncul di dropdown, dan server ini juga dipakai sebagai **cadangan terakhir**
+  bila semua provider gratis (dan Z.ai) gagal.
+- **Tanpa backend (GitHub Pages):** berikan base URL server lewat query
+  `?marbel=https://marbel-phi3.example.com` atau set `window.MARBEL_API_BASE` di
+  `index.html`. Di jalur langsung, provider Marbel dipakai untuk model `marbel`
+  dan menjadi cadangan terakhir untuk model lain.
+- Bila `MARBEL_API_BASE` kosong, model `marbel` otomatis disembunyikan dan
+  perilaku lama tidak berubah.
 
 > **Penting:** model GLM **dikunci** di sidebar bila backend tidak memiliki
 > `ZAI_API_KEY`. Frontend memeriksa `GET /api/status` untuk menentukan status
@@ -285,6 +304,10 @@ Salinan lengkap ada di [`.env.example`](.env.example).
 | `API_KEY` | *(kosong)* | Kunci API upstream utama. Boleh kosong bila upstream tidak memerlukannya |
 | `ZAI_UPSTREAM` | `https://api.z.ai/api/paas/v4` | Base URL cadangan Z.ai (GLM) |
 | `ZAI_API_KEY` | *(kosong)* | Kunci API Z.ai. Model GLM aktif hanya bila ini diisi |
+| `MARBEL_API_BASE` | *(kosong)* | Base URL server Phi-3 Mini (model `marbel`). Kosong = nonaktif |
+| `MARBEL_API_KEY` | *(kosong)* | Kunci API server Phi-3 (boleh kosong) |
+| `MARBEL_MODEL` | `marbel` | Nama model yang dikirim ke server Phi-3 |
+| `MARBEL_TIMEOUT_MS` | `60000` | Batas waktu panggilan ke server Phi-3 (ms) |
 | `ALLOW_ORIGIN` | `*` | Origin yang diizinkan untuk CORS |
 | `USE_SSE` | `0` di `.env.example`, `1` di kode | `1` = mode streaming, `0` = JSON biasa |
 | `LOG_CHAT` | *(kosong)* | Set `1` untuk mencatat setiap request chat di konsol backend |

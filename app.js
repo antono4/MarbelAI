@@ -183,7 +183,16 @@
   // melewati backend proxy (berguna saat backend mati / untuk debugging).
   const forceDirect = new URLSearchParams(window.location.search).get('direct') === '1';
 
-  const FREE_MODELS = ['qwen3.8-27b', 'gpt-oss-20b', 'qwen3-8b'];
+  // Model Marbel AI sendiri (Phi-3 Mini hasil fine-tuning LoRA) dilayani server
+  // OpenAI-compatible. Base URL-nya bisa diberikan lewat ?marbel=<url> atau
+  // window.MARBEL_API_BASE; kosong berarti fitur ini nonaktif.
+  const MARBEL_DIRECT_BASE = (function () {
+    const q = new URLSearchParams(window.location.search).get('marbel');
+    const base = q || (typeof window.MARBEL_API_BASE === 'string' ? window.MARBEL_API_BASE : '');
+    return base.replace(/\/+$/, '');
+  })();
+
+  const FREE_MODELS = ['marbel', 'qwen3.8-27b', 'gpt-oss-20b', 'qwen3-8b'];
   const ZAI_MODELS = ['glm-4.7-flash', 'glm-4.5-flash'];
   let zaiEnabled = false; // diset true bila /api/status melaporkan ZAI_API_KEY tersedia
 
@@ -330,13 +339,23 @@
     },
   ];
 
-  async function directChat(messages, onChunk) {
+  async function directChat(modelId, messages, onChunk) {
+    // Provider Marbel (Phi-3 Mini LoRA) didahulukan saat model `marbel` dipilih,
+    // dan dijadikan cadangan terakhir untuk model lain — server ini paling lambat
+    // (CPU) jadi tidak ingin menahan pemenang tercepat.
+    const providers = DIRECT_PROVIDERS.slice();
+    if (MARBEL_DIRECT_BASE) {
+      const marbel = { label: 'marbel', url: MARBEL_DIRECT_BASE + '/v1/chat/completions', model: 'marbel' };
+      if (modelId === 'marbel') providers.unshift(marbel);
+      else providers.push(marbel);
+    }
     let lastErr = null;
-    for (let i = 0; i < DIRECT_PROVIDERS.length; i++) {
-      const p = DIRECT_PROVIDERS[i];
+    for (let i = 0; i < providers.length; i++) {
+      const p = providers[i];
       const payload = Object.assign({ model: p.model, messages: messages, stream: false, max_tokens: 1024 }, p.extra || {});
       const controller = new AbortController();
-      const timer = setTimeout(function () { controller.abort(); }, 30000);
+      // Model lokal (CPU) lebih lambat, beri jendela lebih longgar.
+      const timer = setTimeout(function () { controller.abort(); }, p.label === 'marbel' ? 60000 : 30000);
       try {
         const res = await fetch(p.url, {
           method: 'POST',
@@ -371,13 +390,13 @@
   // menunggu proxy Render yang sudah mati); bila false, coba backend dulu lalu
   // otomatis jatuh ke provider langsung saat backend gagal dengan cara apa pun.
   async function streamChat(modelId, messages, onChunk, useDirect) {
-    if (useDirect || forceDirect) return await directChat(messages, onChunk);
+    if (useDirect || forceDirect) return await directChat(modelId, messages, onChunk);
     try {
       return await backendStreamChat(modelId, messages, onChunk);
     } catch (e) {
       console.warn('Backend gagal, beralih ke provider langsung:', (e && e.message) || e);
       setStatus('on', 'backend tak tersedia, pakai provider langsung…');
-      return await directChat(messages, onChunk);
+      return await directChat(modelId, messages, onChunk);
     }
   }
 
@@ -494,7 +513,10 @@
       if (selected && !isAll) {
         modelsToTry.push(selected);
       }
-      const backupOrder = FREE_MODELS.concat(zaiEnabled ? ZAI_MODELS : []);
+      // `marbel` sengaja tidak ikut ensemble otomatis: model lokal di CPU jauh
+      // lebih lambat, jadi ia dipakai hanya saat dipilih, atau sebagai cadangan
+      // terakhir di jalur provider langsung.
+      const backupOrder = FREE_MODELS.filter(function (m) { return m !== 'marbel'; }).concat(zaiEnabled ? ZAI_MODELS : []);
       backupOrder.forEach(function (m) {
         if (modelsToTry.indexOf(m) === -1) modelsToTry.push(m);
       });
@@ -705,25 +727,30 @@ form.addEventListener('submit', function (e) { e.preventDefault(); onSend(); });
         // Status backend: apakah upstream Z.ai (GLM) tersedia. Ini dipakai
         // untuk mengunci model GLM di sidebar bila backend tak punya ZAI_API_KEY..
         return fetch(api('/api/status')).then(function (r) { return r.json(); }).catch(function () { return {}; }).then(function (st) {
-          return { data: data, zai: !!(st && st.zai && st.zai.available) };
+          return { data: data, zai: !!(st && st.zai && st.zai.available), marbel: !!(st && st.marbel && st.marbel.available) };
         });
       })
       .then(function (ctx) {
         let all = (ctx.data.data || []).map(function (m) { return m.id; });
         const zaiOn = ctx.zai;
         zaiEnabled = zaiOn;
-        const candidates = FREE_MODELS.concat(zaiOn ? ZAI_MODELS : []);
+        // Model `marbel` siap bila backend melaporkannya, atau bila base URL
+        // server Phi-3 diberikan langsung ke halaman statis.
+        const marbelOn = ctx.marbel || !!MARBEL_DIRECT_BASE;
+        let readyFree = FREE_MODELS.filter(function (id) { return id !== 'marbel' || marbelOn; });
+        const candidates = readyFree.concat(zaiOn ? ZAI_MODELS : []);
         candidates.forEach(function (id) {
           if (all.indexOf(id) === -1) all.push(id);
         });
         const ready = all.filter(function (id) { return candidates.indexOf(id) !== -1; });
-        renderModelNames(ready, zaiOn ? ready : ready.filter(function (id) { return FREE_MODELS.indexOf(id) !== -1; }));
+        renderModelNames(ready, ready);
         populateModelSelect(ready, ready);
         setStatus('on', 'terhubung');
       })
       .catch(function () {
-        renderModelNames(FREE_MODELS, FREE_MODELS);
-        populateModelSelect(FREE_MODELS, FREE_MODELS);
+        const readyFree = FREE_MODELS.filter(function (id) { return id !== 'marbel' || !!MARBEL_DIRECT_BASE; });
+        renderModelNames(readyFree, readyFree);
+        populateModelSelect(readyFree, readyFree);
         setStatus('on', 'terhubung');
       });
   }

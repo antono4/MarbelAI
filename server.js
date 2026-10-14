@@ -43,7 +43,7 @@ const USE_SSE = String(process.env.USE_SSE || '1');
 // Daftar model yang disajikan /api/models dan ditampilkan UI (disamakan dengan
 // MarbelAIv2.1). Bukan daftar upstream, agar namanya konsisten.
 const MODELS_LIST = (
-  process.env.MODELS_LIST || 'qwen3.8-27b,gpt-oss-20b,qwen3-8b'
+  process.env.MODELS_LIST || 'marbel,qwen3.8-27b,gpt-oss-20b,qwen3-8b'
 ).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 // Allow cross-origin calls (e.g. the GitHub Pages statically-served UI) to reach
 // this backend's /api/chat. Restrict with a specific origin for production if desired.
@@ -57,6 +57,16 @@ const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
 
 const ZAI_UPSTREAM = process.env.ZAI_UPSTREAM || 'https://api.z.ai/api/paas/v4';
 const ZAI_API_KEY = process.env.ZAI_API_KEY || '';
+
+// --- Marbel AI sendiri: Phi-3 Mini (LoRA) ------------------------------
+// Model hasil fine-tuning LoRA di repo Phi-3 Mini, dilayani server lokal
+// OpenAI-compatible. Nonaktif bila MARBEL_API_BASE kosong. Dipakai saat user
+// memilih model `marbel`, dan sebagai cadangan terakhir bila upstream gratis
+// (dan Z.ai) gagal, supaya chat tetap terjawab oleh model sendiri.
+const MARBEL_API_BASE = (process.env.MARBEL_API_BASE || '').replace(/\/+$/, '');
+const MARBEL_API_KEY = process.env.MARBEL_API_KEY || '';
+const MARBEL_MODEL = process.env.MARBEL_MODEL || 'marbel';
+const MARBEL_TIMEOUT_MS = Number(process.env.MARBEL_TIMEOUT_MS || '60000');
 
 // --- DoLa (Decoding by Contrasting Layers) ----------------------------
 // Inti paper arXiv:2309.03883 diadaptasi ke level token di atas `logprobs`
@@ -106,6 +116,17 @@ function callUpstream(baseUrl, apiKey, payload, accept, timeoutMs, kind) {
     if (kind !== 'models') req.write(JSON.stringify(payload));
     req.end();
   });
+}
+
+// Panggil server Phi-3 Mini (model Marbel sendiri) sebagai upstream
+// OpenAI-compatible. Mengembalikan {status, headers, body} seperti
+// callUpstream, atau null bila tidak dikonfigurasi / gagal.
+async function callMarbel(payload, accept) {
+  if (!MARBEL_API_BASE) return null;
+  const p = Object.assign({}, payload, { model: MARBEL_MODEL });
+  delete p.dola; delete p.marbel_dola;
+  return await callUpstream(MARBEL_API_BASE, MARBEL_API_KEY, p, accept, MARBEL_TIMEOUT_MS, 'chat')
+    .catch(function () { return null; });
 }
 // --- DoLa: dekode kontras dua model ------------------------------------
 // Panggil satu model dengan logprobs dan kembalikan {text, logprobs}.
@@ -248,6 +269,16 @@ function proxyOpenAI(req, res) {
         target.end(upRes.body);
       }
 
+      // Model `marbel` = Phi-3 Mini (LoRA) milik sendiri: teruskan langsung ke
+      // server lokal. Bila server belum dikonfigurasi / gagal, lanjut ke rantai
+      // upstream gratis di bawah sebagai failover.
+      if (payload.model === 'marbel' && MARBEL_API_BASE) {
+        const r = await callMarbel(payload, accept);
+        if (r && r.status >= 200 && r.status < 300) {
+          sendResult(r); resolve(); return;
+        }
+      }
+
         // Coba upstream utama dulu; bila gagal (HTTP  4xx/5xx atau error
         // jaringan/timeout) dan ZAI_API_KEY tersedia, coba upstream Z.ai (GLM).
         // Daftar UPSTREAM boleh berisi beberapa URL dipisah koma: dicoba
@@ -272,6 +303,12 @@ function proxyOpenAI(req, res) {
           if (tryZai && tryZai.status >= 200 && tryZai.status < 300) {
             sendResult(tryZai); resolve(); return;
           }
+        }
+        // Cadangan terakhir: model Marbel sendiri (Phi-3 Mini LoRA) agar chat
+        // tetap terjawab walau semua provider gratis sedang gagal.
+        const tryMarbel = await callMarbel(payload, accept);
+        if (tryMarbel && tryMarbel.status >= 200 && tryMarbel.status < 300) {
+          sendResult(tryMarbel); resolve(); return;
         }
         // Semua upstream gagal — kirimkan hasil upstream utama bila ada.
 
@@ -314,6 +351,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         zai: { available: !!ZAI_API_KEY },
+        marbel: { available: !!MARBEL_API_BASE, model: MARBEL_MODEL },
         upstream: UPSTREAM,
         use_sse: USE_SSE === '1'
       }));

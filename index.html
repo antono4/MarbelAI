@@ -165,6 +165,7 @@
               <span class="cs-label">Model</span>
               <select id="model">
                 <option value="semua" selected>Semua Model (gabungan)</option>
+                <option value="marbel">Marbel AI (Phi-3 Mini — lokal)</option>
                 <option value="qwen3.8-27b">qwen3.8-27b (uncloseai)</option>
                 <option value="gpt-oss-20b">gpt-oss-20b (pollinations)</option>
                 <option value="qwen3-8b">qwen3-8b (Free.ai)</option>
@@ -183,6 +184,12 @@
       </form>
     </main>
   </div>
+  <!-- Opsional: set window.MARBEL_API_BASE ke URL server Phi-3 Mini (marbel-ai)
+       agar halaman statis ini bisa memanggil model Marbel langsung dari browser
+       (lihat README bagian "Model Marbel"). Kosongkan bila memakai backend proxy. -->
+  <script>
+    // window.MARBEL_API_BASE = 'https://<server-phi3-anda>';
+  </script>
   <script src="app.js?v=20260901b"></script>
 </body>
 </html>
